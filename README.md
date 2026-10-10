@@ -3,6 +3,8 @@
 > **Hamro Nagar, Aafno Sarkar: Ward's Tasks, On Your Screen.**  
 > *हाम्रो नगर, आफ्नो सरकार: वडाका काम, आफ्नै स्क्रिनमा।*
 
+**Live Website**: [https://nagar-yojana.pages.dev](https://nagar-yojana.pages.dev/)
+
 **Nagarयोजना** is an open civic infrastructure monitoring and public transparency platform created for local municipal governance in Nepal, currently configured for **Biratnagar Metropolitan City (विराटनगर महानगरपालिका)**. 
 
 The platform bridges the information gap between municipal authorities and local citizens by providing verified, real-time visibility into ward-level public works, allocated budgets, designated contractors, and construction milestones.
