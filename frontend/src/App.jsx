@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import WardFilters from './components/WardFilters';
@@ -264,18 +264,21 @@ export default function App() {
             </span>
             <span>— {t.footerCivic}</span>
           </div>
-          <div className="text-center md:text-right text-slate-600">
+          <div className="text-center md:text-right text-slate-600 flex flex-col gap-1">
             <span>
-              {t.copyrightPrefix} {new Date().getFullYear()} {t.copyrightSuffix}{' '}
+              {t.copyrightPrefix} {new Date().getFullYear()} {t.copyrightText || `${t.portalName}${t.portalSuffix}. All rights reserved.`}
             </span>
-            <a
-              href="https://shrawankarki.com.np"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-slate-900 hover:text-[#156947] underline underline-offset-2 transition-colors"
-            >
-              shrawankarki.com.np
-            </a>
+            <span className="text-slate-500">
+              {t.developedBy || 'Developed by'}{' '}
+              <a
+                href="https://shrawankarki.com.np"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-slate-800 hover:text-[#156947] underline underline-offset-2 transition-colors"
+              >
+                shrawankarki.com.np
+              </a>
+            </span>
           </div>
         </div>
       </footer>

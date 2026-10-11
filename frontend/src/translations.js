@@ -39,7 +39,8 @@ export const translations = {
     footerCivic:
       'Nagarयोजना — Civic Infrastructure Portal · Biratnagar Metropolitan City (All Wards)',
     copyrightPrefix: '©',
-    copyrightSuffix: 'Nagarयोजना. All rights reserved. Developed by',
+    copyrightText: 'Nagarयोजना. All rights reserved.',
+    developedBy: 'Developed by',
 
     // Grievance Modal
     grievanceTitle: 'Citizen Grievance & Issue Report',
@@ -110,7 +111,8 @@ export const translations = {
     footerCivic:
       'Nagarयोजना — नागरिक पूर्वाधार पोर्टल · विराटनगर महानगरपालिका (सम्पूर्ण वडाहरू)',
     copyrightPrefix: '©',
-    copyrightSuffix: 'Nagarयोजना। सर्वाधिकार सुरक्षित। विकासकर्ता:',
+    copyrightText: 'Nagarयोजना। सर्वाधिकार सुरक्षित।',
+    developedBy: 'विकासकर्ता:',
 
     // Grievance Modal
     grievanceTitle: 'नागरिक गुनासो तथा उजुरी दर्ता',
