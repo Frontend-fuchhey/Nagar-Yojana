@@ -5,3 +5,6 @@ backend/node_modules/
 .env.local
 .DS_Store
 Thumbs.db
+dist/
+frontend/dist/
+build/
