@@ -1,11 +1,10 @@
-import React from 'react';
-import { Lock } from 'lucide-react';
+﻿import React from 'react';
+import { User, Globe } from 'lucide-react';
 
 /**
- * Bespoke 3-Building Isometric Cluster SVG
- * Styled according to civic infrastructure identity
+ * Bespoke 3-Building Isometric Cluster SVG Logo
  */
-function NagarYojanaLogoIcon({ className = "w-8 h-8" }) {
+function NagarYojanaLogoIcon({ className = "w-7 h-7 sm:w-8 sm:h-8" }) {
   return (
     <svg
       viewBox="0 0 36 36"
@@ -18,7 +17,6 @@ function NagarYojanaLogoIcon({ className = "w-8 h-8" }) {
       <polygon points="10,10 16,6 16,30 10,34" fill="#B91C1C" />
       <polygon points="4,14 10,10 10,34 4,37" fill="#991B1B" />
       <polygon points="10,10 16,6 10,2 4,14" fill="#DC2626" />
-      {/* Left Building Amber Window Slits */}
       <line x1="7" y1="18" x2="7" y2="21" stroke="#FBBF24" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="7" y1="24" x2="7" y2="27" stroke="#FBBF24" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="13" y1="13" x2="13" y2="16" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
@@ -28,7 +26,6 @@ function NagarYojanaLogoIcon({ className = "w-8 h-8" }) {
       {/* Center Tall Building */}
       <polygon points="21,5 27,1 27,29 21,33" fill="#DC143C" />
       <polygon points="15,9 21,5 21,33 15,36" fill="#B91C1C" />
-      {/* Center Amber Window Slits */}
       <line x1="18" y1="13" x2="18" y2="17" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="18" y1="20" x2="18" y2="24" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="18" y1="27" x2="18" y2="31" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
@@ -39,7 +36,6 @@ function NagarYojanaLogoIcon({ className = "w-8 h-8" }) {
       {/* Right Building */}
       <polygon points="31,12 36,9 36,30 31,33" fill="#991B1B" />
       <polygon points="26,15 31,12 31,33 26,36" fill="#7F1D1D" />
-      {/* Right Amber Window Slits */}
       <line x1="28.5" y1="19" x2="28.5" y2="23" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="28.5" y1="26" x2="28.5" y2="30" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
       <line x1="33.5" y1="15" x2="33.5" y2="19" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
@@ -50,46 +46,55 @@ function NagarYojanaLogoIcon({ className = "w-8 h-8" }) {
 
 export default function Navbar({ language, onLanguageChange, t, onStaffLoginClick }) {
   return (
-    <header className="w-full bg-white border-b border-gray-200 sticky top-0 z-40">
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+    <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
+      <div className="w-full max-w-[1400px] mx-auto px-3 sm:px-4 lg:px-5 h-14 flex items-center justify-between">
+
         {/* Brand Block */}
-        <div className="flex items-center gap-3">
-          <NagarYojanaLogoIcon className="w-9 h-9 sm:w-10 sm:h-10 flex-shrink-0" />
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <NagarYojanaLogoIcon className="w-7 h-7 sm:w-8 sm:h-8 flex-shrink-0" />
           <div className="flex flex-col">
-            <div className="flex items-baseline tracking-tight font-bold text-2xl sm:text-[26px] leading-none">
+            <div className="flex items-baseline tracking-tight font-bold text-xl sm:text-[22px] leading-none">
               <span className="text-[#DC143C]">Nagar</span>
-              <span className="text-[#2E8B57]">योजना</span>
+              <span className="text-[#156947]">योजना</span>
             </div>
-            <span className="text-xs text-gray-500 font-normal tracking-wide mt-1">
-              {t.portalSubtitle}
-            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] sm:text-[11px] text-slate-500 font-medium leading-none">
+                {t.portalSubtitle}
+              </span>
+              <span className="text-slate-300 text-[10px] leading-none">•</span>
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-normal leading-none">
+                {t.portalMunicipality}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Right Action Block: Single Language Toggle (ने / En) + Staff Login */}
-        <div className="flex items-center gap-3 sm:gap-4">
-          {/* Single Language Button: Compact, borderless; on hover shows rounded background with no border */}
+        {/* Right Action Block: Language Dropdown (🌐 EN ▾) + Staff Portal Button */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Single language toggle: shows the language you can switch to */}
           <button
             type="button"
-            onClick={() => onLanguageChange(language === 'en' ? 'ne' : 'en')}
-            className="inline-flex items-center justify-center w-7 h-7 text-xs font-bold text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors focus:outline-none"
-            title={language === 'en' ? 'नेपालीमा हेर्नुहोस्' : 'Switch to English'}
-            aria-label={language === 'en' ? 'Switch to Nepali' : 'Switch to English'}
+            onClick={() => onLanguageChange(language === 'ne' ? 'en' : 'ne')}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+            aria-label={language === 'ne' ? 'Switch language to English' : 'भाषा नेपालीमा बदल्नुहोस्'}
+            title={language === 'ne' ? 'Switch to English' : 'नेपालीमा हेर्नुहोस्'}
           >
-            <span>{language === 'en' ? 'ने' : 'En'}</span>
+            <Globe className="w-4 h-4 text-slate-600" />
+            <span>{language === 'ne' ? 'En' : 'ने'}</span>
           </button>
 
-          {/* Staff Login Button */}
+          {/* Squeezed Staff Portal Button matching mockup */}
           <button
             type="button"
             onClick={onStaffLoginClick}
-            className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 px-2.5 sm:px-3 py-1.5 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-1 focus:ring-gray-400"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
           >
-            <Lock className="w-3.5 h-3.5 text-gray-700 stroke-[2.2]" />
-            <span>{t.staffLogin}</span>
+            <User className="w-3.5 h-3.5 text-slate-600 stroke-[2.2]" />
+            <span>{t.staffPortal}</span>
           </button>
         </div>
       </div>
     </header>
   );
 }
+

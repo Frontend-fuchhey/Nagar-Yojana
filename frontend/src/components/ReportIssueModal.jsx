@@ -152,7 +152,7 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-[#DC143C] hover:bg-red-700 rounded-md transition-colors shadow-sm"
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#0284C7] hover:bg-[#0369A1] rounded-lg transition-colors shadow-sm"
               >
                 {t.submitGrievanceBtn}
               </button>
