@@ -32,6 +32,28 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
   const handleSubmit = (e) => {
     e.preventDefault();
     setSubmitted(true);
+
+    // Dispatch grievance to backend & ward executive queue
+    try {
+      const wardNum = parseInt(String(project.ward || '').replace(/\D/g, ''), 10) || 4;
+      fetch('/api/grievances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.id,
+          projectTitle: displayTitle,
+          ward: project.ward,
+          wardNumber: wardNum,
+          name: formData.name,
+          phone: formData.phone,
+          issueType: formData.issueType,
+          description: formData.description,
+        }),
+      }).catch((err) => console.warn('Could not persist grievance to API:', err));
+    } catch (err) {
+      console.warn('Grievance submission error:', err);
+    }
+
     setTimeout(() => {
       setSubmitted(false);
       onClose();

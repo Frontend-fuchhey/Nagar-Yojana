@@ -4,7 +4,7 @@ import Hero from './components/Hero';
 import WardFilters from './components/WardFilters';
 import ProjectList from './components/ProjectList';
 import ReportIssueModal from './components/ReportIssueModal';
-import StaffLoginModal from './components/StaffLoginModal';
+import StaffPortal from './components/StaffPortal';
 import { translations, PROJECT_TRANSLATIONS } from './translations';
 
 // Initial verified civic infrastructure projects for Biratnagar Metropolitan City
@@ -110,9 +110,28 @@ export default function App() {
   const [activeSector, setActiveSector] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Modal States
+  // Portal View & Modal States
+  const [isStaffView, setIsStaffView] = useState(() => {
+    return window.location.search.includes('portal=staff');
+  });
   const [selectedProjectForReport, setSelectedProjectForReport] = useState(null);
-  const [isStaffLoginOpen, setIsStaffLoginOpen] = useState(false);
+
+  // Sync isStaffView with URL changes
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsStaffView(window.location.search.includes('portal=staff'));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleReturnToPublic = () => {
+    setIsStaffView(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('portal');
+    const newPath = url.pathname + (url.search ? url.search : '') + url.hash;
+    window.history.pushState({}, '', newPath);
+  };
 
   // Fetch projects from backend API with fallback
   const fetchProjects = async () => {
@@ -219,6 +238,11 @@ export default function App() {
     });
   }, [projects, activeWard, activeStatus, activeSector, searchQuery]);
 
+  // If accessed with ?portal=staff or isStaffView is active, render dedicated StaffPortal
+  if (isStaffView) {
+    return <StaffPortal onReturnToPublic={handleReturnToPublic} language={language} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col selection:bg-emerald-100 selection:text-emerald-900 font-sans">
       {/* Top Sticky Header */}
@@ -226,7 +250,6 @@ export default function App() {
         language={language}
         onLanguageChange={handleLanguageChange}
         t={t}
-        onStaffLoginClick={() => setIsStaffLoginOpen(true)}
       />
 
       {/* Hero Section with Panorama Landscape Background & Calligraphy */}
@@ -293,19 +316,13 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Modals */}
+      {/* Grievance Modal */}
       <ReportIssueModal
         project={selectedProjectForReport}
         language={language}
         t={t}
         isOpen={Boolean(selectedProjectForReport)}
         onClose={() => setSelectedProjectForReport(null)}
-      />
-
-      <StaffLoginModal
-        isOpen={isStaffLoginOpen}
-        t={t}
-        onClose={() => setIsStaffLoginOpen(false)}
       />
     </div>
   );

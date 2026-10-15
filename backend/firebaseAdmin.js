@@ -4,6 +4,7 @@ const admin = require("firebase-admin");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 require("dotenv").config();
 
 let isFirebaseInitialized = false;
@@ -24,15 +25,27 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   }
 }
 
-// 2. If not found in env, check backend/serviceAccountKey.json
+// 2. Check candidate paths for serviceAccountKey.json (or custom path in process.env.FIREBASE_SERVICE_ACCOUNT_PATH)
 if (!serviceAccount) {
-  const keyFilePath = path.join(__dirname, "serviceAccountKey.json");
-  if (fs.existsSync(keyFilePath)) {
-    try {
-      const fileData = fs.readFileSync(keyFilePath, "utf8");
-      serviceAccount = JSON.parse(fileData);
-    } catch (err) {
-      console.error("[FirebaseAdmin] Failed to read or parse backend/serviceAccountKey.json:", err.message);
+  const candidatePaths = [
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+    path.join(__dirname, "serviceAccountKey.json"),
+    path.join(process.cwd(), "serviceAccountKey.json"),
+    path.join(process.cwd(), "backend", "serviceAccountKey.json"),
+  ].filter(Boolean);
+
+  for (const candidatePath of candidatePaths) {
+    if (fs.existsSync(candidatePath)) {
+      try {
+        const fileData = fs.readFileSync(candidatePath, "utf8");
+        serviceAccount = JSON.parse(fileData);
+        if (serviceAccount.project_id) {
+          console.log(`[FirebaseAdmin] Located service account key file at: ${candidatePath}`);
+          break;
+        }
+      } catch (err) {
+        console.error(`[FirebaseAdmin] Failed to read or parse service account file at ${candidatePath}:`, err.message);
+      }
     }
   }
 }

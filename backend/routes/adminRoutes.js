@@ -1,7 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const { admin, adminAuth, adminDb } = require("../firebaseAdmin");
-const { verifyToken, requireSuperAdmin } = require("../middleware/authMiddleware");
+const { verifyToken, requireSuperAdmin, requireWardExec } = require("../middleware/authMiddleware");
 const { sendWardExecCredentials } = require("../services/emailService");
 
 const router = express.Router();
@@ -10,55 +10,58 @@ const router = express.Router();
  * POST /api/admin/provision-ward-exec
  *
  * Provisions a new Ward Executive for a designated ward (1 - 19):
- * 1. Validates payload (email, wardNumber, fullName, phone)
- * 2. Ensures no active Ward Executive already exists for that ward
+ * 1. Validates payload (fullName/name, phone/number, email/gmail, wardNumber, servicePeriod/timePeriod)
+ * 2. Calculates sequential executive ID for the ward (e.g. WE-4-1, WE-4-2, WE-12-1)
  * 3. Generates secure random 8-character temporary password
- * 4. Creates Firebase Auth user
- * 5. Sets custom user claims: { role: 'WARD_EXEC', wardNumber }
+ * 4. Creates user in Firebase Auth
+ * 5. Sets custom user claims: { role: 'WARD_EXEC', wardNumber, executiveId }
  * 6. Stores user document in Firestore `users/{uid}`
- * 7. Dispatches onboarding email with login credentials
+ * 7. Dispatches onboarding email with login credentials and sequential ID
  */
 router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { email, wardNumber, fullName, phone } = req.body;
+    const rawEmail = req.body.email || req.body.gmail;
+    const rawFullName = req.body.fullName || req.body.name;
+    const rawPhone = req.body.phone || req.body.number;
+    const rawWardNumber = req.body.wardNumber;
+    const rawServicePeriod = req.body.servicePeriod || req.body.timePeriod;
 
     // 1. Validate required fields
-    if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    if (!rawEmail || typeof rawEmail !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail.trim())) {
       return res.status(400).json({
         error: "A valid email address is required."
       });
     }
 
-    const ward = Number(wardNumber);
+    const ward = Number(rawWardNumber);
     if (!Number.isInteger(ward) || ward < 1 || ward > 19) {
       return res.status(400).json({
         error: "Invalid wardNumber. Biratnagar Metropolitan City comprises wards 1 through 19 (must be an integer from 1 to 19)."
       });
     }
 
-    if (!fullName || typeof fullName !== "string" || !fullName.trim()) {
+    if (!rawFullName || typeof rawFullName !== "string" || !rawFullName.trim()) {
       return res.status(400).json({
         error: "Full name is required."
       });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanFullName = fullName.trim();
-    const cleanPhone = phone ? String(phone).trim() : null;
+    const cleanEmail = rawEmail.trim().toLowerCase();
+    const cleanFullName = rawFullName.trim();
+    const cleanPhone = rawPhone ? String(rawPhone).trim() : null;
+    const cleanServicePeriod = (rawServicePeriod && typeof rawServicePeriod === "string" && rawServicePeriod.trim())
+      ? rawServicePeriod.trim()
+      : "2081 - 2086 B.S.";
 
-    // 2. Check if an active Ward Executive already exists for this ward
-    const existingSnap = await adminDb
+    // 2. Calculate sequential executive ID for the ward
+    const existingExecsSnap = await adminDb
       .collection("users")
-      .where("wardNumber", "==", ward)
       .where("role", "==", "WARD_EXEC")
-      .where("isActive", "==", true)
+      .where("wardNumber", "==", ward)
       .get();
 
-    if (!existingSnap.empty) {
-      return res.status(409).json({
-        error: `An active Ward Executive is already assigned to Ward ${ward}. Deactivate or reassign the existing executive before provisioning a new one.`
-      });
-    }
+    const seqNumber = existingExecsSnap.size + 1;
+    const executiveId = `WE-${ward}-${seqNumber}`;
 
     // 3. Generate secure random 8-character temporary password (4 bytes = 8 hex chars)
     const tempPassword = crypto.randomBytes(4).toString("hex");
@@ -88,17 +91,20 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
     // 5. Assign Custom User Claims in Firebase Auth
     await adminAuth.setCustomUserClaims(userRecord.uid, {
       role: "WARD_EXEC",
-      wardNumber: ward
+      wardNumber: ward,
+      executiveId
     });
 
     // 6. Save user profile document in Firestore: users/{uid}
     const userDocData = {
       uid: userRecord.uid,
+      executiveId,
       email: cleanEmail,
       fullName: cleanFullName,
       phone: cleanPhone,
       role: "WARD_EXEC",
       wardNumber: ward,
+      servicePeriod: cleanServicePeriod,
       isActive: true,
       mustChangePassword: true,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -113,6 +119,8 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
         email: cleanEmail,
         fullName: cleanFullName,
         wardNumber: ward,
+        servicePeriod: cleanServicePeriod,
+        executiveId,
         tempPassword
       });
     } catch (emailErr) {
@@ -124,6 +132,7 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
     return res.status(201).json({
       message: "Ward Executive successfully provisioned",
       uid: userRecord.uid,
+      executiveId,
       wardNumber: ward,
       emailSent: emailDispatched
     });
@@ -138,9 +147,11 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
 
 /**
  * GET /api/admin/ward-execs
- * Lists all registered Ward Executives (protected by verifyToken & requireSuperAdmin)
+ * Lists all registered Ward Executives.
+ * Accessible to Super Admin and authenticated staff.
+ * Returns array sorted by wardNumber, then executiveId.
  */
-router.get("/ward-execs", verifyToken, requireSuperAdmin, async (req, res) => {
+router.get("/ward-execs", verifyToken, requireWardExec, async (req, res) => {
   try {
     const snapshot = await adminDb
       .collection("users")
@@ -152,14 +163,59 @@ router.get("/ward-execs", verifyToken, requireSuperAdmin, async (req, res) => {
       executives.push(doc.data());
     });
 
-    // Sort by wardNumber ascending
-    executives.sort((a, b) => (a.wardNumber || 0) - (b.wardNumber || 0));
+    // Sort by wardNumber ascending, then executiveId ascending
+    executives.sort((a, b) => {
+      const wardA = Number(a.wardNumber) || 0;
+      const wardB = Number(b.wardNumber) || 0;
+      if (wardA !== wardB) {
+        return wardA - wardB;
+      }
+      return String(a.executiveId || "").localeCompare(String(b.executiveId || ""), undefined, { numeric: true });
+    });
 
     return res.json({ executives });
   } catch (error) {
     console.error("[AdminRoutes] Error listing Ward Executives:", error);
     return res.status(500).json({
       error: "Failed to retrieve Ward Executives list.",
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/admin/next-id/:wardNumber
+ * Returns the next anticipated sequential ID for a given ward (e.g. { nextExecutiveId: 'WE-4-1' }).
+ * Allows the admin UI to display a live preview before provisioning.
+ * Accessible to Super Admin and authenticated staff.
+ */
+router.get("/next-id/:wardNumber", verifyToken, requireWardExec, async (req, res) => {
+  try {
+    const ward = Number(req.params.wardNumber);
+    if (!Number.isInteger(ward) || ward < 1 || ward > 19) {
+      return res.status(400).json({
+        error: "Invalid wardNumber. Biratnagar Metropolitan City comprises wards 1 through 19 (must be an integer from 1 to 19)."
+      });
+    }
+
+    const existingExecsSnap = await adminDb
+      .collection("users")
+      .where("role", "==", "WARD_EXEC")
+      .where("wardNumber", "==", ward)
+      .get();
+
+    const seqNumber = existingExecsSnap.size + 1;
+    const nextExecutiveId = `WE-${ward}-${seqNumber}`;
+
+    return res.json({
+      nextExecutiveId,
+      wardNumber: ward,
+      currentCount: existingExecsSnap.size
+    });
+  } catch (error) {
+    console.error("[AdminRoutes] Error calculating next executive ID:", error);
+    return res.status(500).json({
+      error: "Failed to calculate next executive ID.",
       details: error.message
     });
   }

@@ -1,7 +1,7 @@
 import React from 'react';
-import { User, Globe } from 'lucide-react';
+import { Globe } from 'lucide-react';
 
-export default function Navbar({ language, onLanguageChange, t, onStaffLoginClick }) {
+export default function Navbar({ language, onLanguageChange, t }) {
   return (
     <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
       <div className="w-full max-w-[1400px] mx-auto px-3 sm:px-4 lg:px-5 h-16 flex items-center justify-between">
@@ -30,9 +30,8 @@ export default function Navbar({ language, onLanguageChange, t, onStaffLoginClic
           </div>
         </div>
 
-        {/* Right Action Block: Language Dropdown (🌐 EN ▾) + Staff Portal Button */}
+        {/* Right Action Block: Language Switcher */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Single language toggle: shows the language you can switch to */}
           <button
             type="button"
             onClick={() => onLanguageChange(language === 'ne' ? 'en' : 'ne')}
@@ -42,16 +41,6 @@ export default function Navbar({ language, onLanguageChange, t, onStaffLoginClic
           >
             <Globe className="w-4 h-4 text-slate-600" />
             <span>{language === 'ne' ? 'En' : 'ने'}</span>
-          </button>
-
-          {/* Squeezed Staff Portal Button matching mockup */}
-          <button
-            type="button"
-            onClick={onStaffLoginClick}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
-          >
-            <User className="w-3.5 h-3.5 text-slate-600 stroke-[2.2]" />
-            <span>{t.staffPortal}</span>
           </button>
         </div>
       </div>

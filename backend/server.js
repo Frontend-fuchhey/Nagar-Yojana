@@ -117,6 +117,113 @@ app.get("/api/projects", (req, res) => {
   }
 });
 
+// In-memory grievances store for Biratnagar Wards
+let grievances = [
+  {
+    id: "GRV-101",
+    projectId: 1,
+    projectTitle: "Ward 04 Drainage Upgrade",
+    ward: "Ward 04",
+    wardNumber: 4,
+    name: "Santosh Karki",
+    phone: "9842012345",
+    issueType: "Construction Delay",
+    description: "Drain excavation left open without gravel backfill near Chundevi Chowk for 2 weeks.",
+    status: "OPEN",
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
+  },
+  {
+    id: "GRV-102",
+    projectId: 1,
+    projectTitle: "Ward 04 Drainage Upgrade",
+    ward: "Ward 04",
+    wardNumber: 4,
+    name: "Anita Pokharel",
+    phone: "9812345678",
+    issueType: "Quality of Materials",
+    description: "Pipes delivered appear damaged on edges before pipe-laying.",
+    status: "INVESTIGATING",
+    createdAt: new Date(Date.now() - 86400000).toISOString()
+  }
+];
+
+// PUT /api/projects/:id - Update project progress and status
+app.put("/api/projects/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { progress, status } = req.body;
+    const project = projects.find((p) => p.id === Number(id));
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    if (progress !== undefined) {
+      project.progress = Math.min(100, Math.max(0, Number(progress)));
+    }
+    if (status) {
+      project.status = String(status).toUpperCase();
+    }
+    res.json({ message: "Project updated successfully", project });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update project" });
+  }
+});
+
+// GET /api/grievances - Retrieve grievances (optional filter by wardNumber)
+app.get("/api/grievances", (req, res) => {
+  try {
+    const wardNumber = req.query.wardNumber ? Number(req.query.wardNumber) : null;
+    let list = [...grievances];
+    if (wardNumber) {
+      list = list.filter((g) => g.wardNumber === wardNumber);
+    }
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch grievances" });
+  }
+});
+
+// POST /api/grievances - Submit new citizen grievance
+app.post("/api/grievances", (req, res) => {
+  try {
+    const { projectId, projectTitle, ward, wardNumber, name, phone, issueType, description } = req.body;
+    const newGrievance = {
+      id: `GRV-${Date.now().toString().slice(-4)}`,
+      projectId: Number(projectId) || null,
+      projectTitle: projectTitle || "Civic Project",
+      ward: ward || `Ward ${wardNumber || "04"}`,
+      wardNumber: Number(wardNumber) || 4,
+      name: name || "Anonymous Citizen",
+      phone: phone || "N/A",
+      issueType: issueType || "General Issue",
+      description: description || "",
+      status: "OPEN",
+      createdAt: new Date().toISOString()
+    };
+    grievances.unshift(newGrievance);
+    res.status(201).json(newGrievance);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to register grievance" });
+  }
+});
+
+// PATCH /api/grievances/:id/status - Update grievance status (OPEN, INVESTIGATING, RESOLVED)
+app.patch("/api/grievances/:id/status", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const grv = grievances.find((g) => g.id === id);
+    if (!grv) {
+      return res.status(404).json({ error: "Grievance not found" });
+    }
+    if (status) {
+      grv.status = String(status).toUpperCase();
+    }
+    res.json({ message: "Grievance status updated", grievance: grv });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update grievance status" });
+  }
+});
+
 // Mount API routers
 app.use("/api/admin", adminRoutes);
 

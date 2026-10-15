@@ -45,12 +45,13 @@ function requireSuperAdmin(req, res, next) {
 }
 
 /**
- * Middleware to restrict route access to WARD_EXEC or SUPER_ADMIN users.
+ * Middleware to restrict route access to WARD_EXEC, STAFF, or SUPER_ADMIN users.
  */
 function requireWardExec(req, res, next) {
-  if (!req.user || (req.user.role !== "WARD_EXEC" && req.user.role !== "SUPER_ADMIN")) {
+  const allowedRoles = ["SUPER_ADMIN", "ADMIN", "WARD_EXEC", "STAFF"];
+  if (!req.user || !allowedRoles.includes(req.user.role)) {
     return res.status(403).json({
-      error: "Forbidden: Ward Executive or Super Admin access required."
+      error: "Forbidden: Ward Executive, Staff, or Super Admin access required."
     });
   }
   next();
@@ -59,5 +60,6 @@ function requireWardExec(req, res, next) {
 module.exports = {
   verifyToken,
   requireSuperAdmin,
-  requireWardExec
+  requireWardExec,
+  requireStaffOrAdmin: requireWardExec
 };
