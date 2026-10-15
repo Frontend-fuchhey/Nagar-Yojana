@@ -1,5 +1,7 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const adminRoutes = require("./routes/adminRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -114,6 +116,9 @@ app.get("/api/projects", (req, res) => {
       .json({ error: "Internal server error while retrieving projects." });
   }
 });
+
+// Mount API routers
+app.use("/api/admin", adminRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {

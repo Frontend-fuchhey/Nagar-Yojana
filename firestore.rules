@@ -1,0 +1,125 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HELPER FUNCTIONS & ROLE-BASED ACCESS CONTROL (RBAC)
+    // =========================================================================
+
+    // Check if the request is from an authenticated user
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated user has the Super Admin custom claim or role
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'SUPER_ADMIN' ||
+        request.auth.token.admin == true
+      );
+    }
+
+    // Check if the authenticated user has the Ward Executive custom claim
+    function isWardExec() {
+      return isAuthenticated() && request.auth.token.role == 'WARD_EXEC';
+    }
+
+    // Extract the Ward Executive's assigned ward number from token claims
+    function getExecWardNumber() {
+      return request.auth.token.wardNumber;
+    }
+
+    // Check if the document belongs to the authenticated user
+    function isSelf(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if a project's ward matches the Ward Executive's assigned ward
+    function isWardAuthorized(data) {
+      return isSuperAdmin() || (
+        isWardExec() && (
+          data.wardNumber == getExecWardNumber() ||
+          data.ward == 'Ward ' + string(getExecWardNumber()) ||
+          data.ward == 'Ward 0' + string(getExecWardNumber())
+        )
+      );
+    }
+
+    // =========================================================================
+    // USERS COLLECTION (Staff & Municipal Profiles)
+    // =========================================================================
+    match /users/{userId} {
+      // Super Admin can read all users
+      // Users can read their own profile
+      // Ward Executives can view staff profiles for civic coordination
+      allow read: if isSuperAdmin() || isSelf(userId) || isWardExec();
+
+      // Only Super Admin can create or delete staff profiles
+      // Ward Executives are provisioned by the backend via Firebase Admin SDK
+      allow create, delete: if isSuperAdmin();
+
+      // Super Admin can update any field
+      // Users can update their own personal info (phone, displayName),
+      // but cannot elevate their role, alter their wardNumber, or toggle isActive
+      allow update: if isSuperAdmin() || (
+        isSelf(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'wardNumber', 'isActive', 'uid'])
+      );
+    }
+
+    // =========================================================================
+    // CIVIC INFRASTRUCTURE PROJECTS (Public Portal Oversight)
+    // =========================================================================
+    match /projects/{projectId} {
+      // Public Read: Any citizen or resident can view infrastructure projects in real-time
+      allow read: if true;
+
+      // Creation: Super Admin can create projects. Ward Exec can create projects for their own ward.
+      allow create: if isSuperAdmin() || (isWardExec() && isWardAuthorized(request.resource.data));
+
+      // Modification: Super Admin has full write access.
+      // Ward Executives can update progress, status, milestones, and description for projects in their ward.
+      allow update: if isSuperAdmin() || (
+        isWardExec() &&
+        isWardAuthorized(resource.data) &&
+        isWardAuthorized(request.resource.data)
+      );
+
+      // Deletion: Strict Super Admin privilege only
+      allow delete: if isSuperAdmin();
+    }
+
+    // =========================================================================
+    // CITIZEN GRIEVANCES & CIVIC COMPLAINTS
+    // =========================================================================
+    match /grievances/{grievanceId} {
+      // Creation: Any citizen (even unauthenticated or authenticated) can submit a grievance
+      allow create: if request.resource.data.description is string
+                    && request.resource.data.description.size() > 5
+                    && request.resource.data.ward is string;
+
+      // Reading: Super Admin can read all grievances.
+      // Ward Execs can read grievances submitted for their ward.
+      // Authenticated citizens can read their own submissions if linked by uid.
+      allow read: if isSuperAdmin() ||
+                     (isWardExec() && isWardAuthorized(resource.data)) ||
+                     (isAuthenticated() && resource.data.submittedBy == request.auth.uid);
+
+      // Updating Status / Response: Super Admin and the responsible Ward Executive can update progress/action notes
+      allow update: if isSuperAdmin() || (
+        isWardExec() && isWardAuthorized(resource.data)
+      );
+
+      // Deletion: Super Admin only
+      allow delete: if isSuperAdmin();
+    }
+
+    // =========================================================================
+    // AUDIT LOGS & PROVISIONING ACTIVITY
+    // =========================================================================
+    match /auditLogs/{logId} {
+      allow read, write: if isSuperAdmin();
+    }
+  }
+}
