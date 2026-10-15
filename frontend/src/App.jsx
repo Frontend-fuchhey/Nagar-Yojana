@@ -99,9 +99,9 @@ export default function App() {
 
   const t = translations[language] || translations.en;
 
-  // Projects state initialized directly with the specified projects
+  // Projects state initialized with default projects as initial or fallback data
   const [projects, setProjects] = useState(DEFAULT_PROJECTS);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // Filter States
@@ -118,6 +118,7 @@ export default function App() {
   const fetchProjects = async () => {
     setLoading(true);
     setError(null);
+    const startTime = Date.now();
     try {
       let response;
       try {
@@ -140,7 +141,16 @@ export default function App() {
     } catch (err) {
       console.warn('Backend fetch unreached, maintaining initial dataset:', err);
     } finally {
-      setLoading(false);
+      // Ensure users see a graceful, polished loading transition (at least 600ms)
+      const elapsed = Date.now() - startTime;
+      const minLoadingDuration = 600;
+      if (elapsed < minLoadingDuration) {
+        setTimeout(() => {
+          setLoading(false);
+        }, minLoadingDuration - elapsed);
+      } else {
+        setLoading(false);
+      }
     }
   };
 

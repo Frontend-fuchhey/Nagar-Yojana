@@ -13,23 +13,90 @@ export default function ProjectList({
 }) {
   if (loading) {
     return (
-      <div className="space-y-4">
-        {[1, 2].map((idx) => (
-          <div
+      <div className="space-y-4" role="status" aria-label="Loading projects">
+        {[1, 2, 3].map((idx) => (
+          <article
             key={idx}
-            className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col lg:flex-row gap-6 animate-pulse"
+            className="bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-sm overflow-hidden"
           >
-            <div className="w-full sm:w-64 lg:w-72 h-44 bg-slate-200 rounded-xl flex-shrink-0" />
-            <div className="flex-1 flex flex-col justify-between h-44 py-1 space-y-4">
-              <div>
-                <div className="h-5 bg-slate-200 rounded w-1/4 mb-3" />
-                <div className="h-6 bg-slate-200 rounded w-2/3 mb-2" />
-                <div className="h-4 bg-slate-200 rounded w-1/2" />
+            <div className="flex flex-col lg:flex-row gap-5 lg:gap-6 items-start">
+              {/* Column 1: Image Thumbnail Skeleton with subtle badge placeholder */}
+              <div className="w-full sm:w-64 lg:w-72 h-44 sm:h-48 rounded-xl bg-slate-200/80 animate-shimmer flex-shrink-0 relative">
+                {/* Optional featured tag skeleton on 1st card */}
+                {idx === 1 && (
+                  <div className="absolute top-2.5 left-2.5 w-20 h-5 rounded-full bg-slate-300/80" />
+                )}
               </div>
-              <div className="h-4 bg-slate-200 rounded w-3/4" />
+
+              {/* Column 2: Central Details (Ward, Title, Location & Contractor Meta, Description, Budget & Progress) */}
+              <div className="flex-1 flex flex-col justify-between self-stretch min-w-0 py-0.5">
+                <div>
+                  {/* Ward Eyebrow Skeleton */}
+                  <div className="h-3.5 w-16 bg-slate-200 rounded-md animate-shimmer mb-2" />
+
+                  {/* Project Title Skeleton */}
+                  <div className="space-y-2 mb-3">
+                    <div
+                      className={`h-5 bg-slate-200 rounded-md animate-shimmer ${
+                        idx % 2 === 0 ? 'w-4/5' : 'w-3/5'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Meta Row: Location & Contractor Skeleton */}
+                  <div className="flex items-center gap-3 mb-3.5">
+                    <div className="h-3.5 w-28 bg-slate-200 rounded animate-shimmer" />
+                    <span className="text-slate-300 select-none">|</span>
+                    <div className="h-3.5 w-36 bg-slate-200 rounded animate-shimmer" />
+                  </div>
+
+                  {/* Description Paragraph Skeleton */}
+                  <div className="space-y-1.5 mt-2">
+                    <div className="h-3 w-full bg-slate-200/70 rounded animate-shimmer" />
+                    <div className="h-3 w-4/5 bg-slate-200/70 rounded animate-shimmer" />
+                  </div>
+                </div>
+
+                {/* Bottom Row inside Center Column: Budget & Progress Track */}
+                <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
+                  {/* Budget Box Skeleton */}
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-slate-200 animate-shimmer flex-shrink-0" />
+                    <div className="space-y-1.5">
+                      <div className="h-2.5 w-10 bg-slate-200 rounded animate-shimmer" />
+                      <div className="h-3.5 w-20 bg-slate-200 rounded animate-shimmer" />
+                    </div>
+                  </div>
+
+                  {/* Progress Track Skeleton */}
+                  <div className="w-36 sm:w-48 lg:w-52">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <div className="h-2.5 w-12 bg-slate-200 rounded animate-shimmer" />
+                      <div className="h-2.5 w-7 bg-slate-200 rounded animate-shimmer" />
+                    </div>
+                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden animate-shimmer" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 3: Right Status & Action Column (Status, Date, Action Button) */}
+              <div className="w-full sm:w-44 lg:w-48 flex sm:flex-col justify-between sm:items-end self-stretch sm:border-l sm:border-slate-100 sm:pl-5 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 gap-3">
+                {/* Status Badge Skeleton */}
+                <div className="h-5 w-20 bg-slate-200 rounded-md animate-shimmer" />
+
+                {/* Date Skeleton */}
+                <div className="space-y-1.5 flex flex-col sm:items-end">
+                  <div className="h-2.5 w-14 bg-slate-200 rounded animate-shimmer" />
+                  <div className="h-3.5 w-24 bg-slate-200 rounded animate-shimmer" />
+                </div>
+
+                {/* Action Button Skeleton */}
+                <div className="h-9 w-28 sm:w-32 bg-slate-200 rounded-xl animate-shimmer" />
+              </div>
             </div>
-          </div>
+          </article>
         ))}
+        <span className="sr-only">Loading project data...</span>
       </div>
     );
   }

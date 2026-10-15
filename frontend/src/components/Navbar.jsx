@@ -1,57 +1,18 @@
-﻿import React from 'react';
+import React from 'react';
 import { User, Globe } from 'lucide-react';
-
-/**
- * Bespoke 3-Building Isometric Cluster SVG Logo
- */
-function NagarYojanaLogoIcon({ className = "w-7 h-7 sm:w-8 sm:h-8" }) {
-  return (
-    <svg
-      viewBox="0 0 36 36"
-      className={className}
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* Left Building */}
-      <polygon points="10,10 16,6 16,30 10,34" fill="#B91C1C" />
-      <polygon points="4,14 10,10 10,34 4,37" fill="#991B1B" />
-      <polygon points="10,10 16,6 10,2 4,14" fill="#DC2626" />
-      <line x1="7" y1="18" x2="7" y2="21" stroke="#FBBF24" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="7" y1="24" x2="7" y2="27" stroke="#FBBF24" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="13" y1="13" x2="13" y2="16" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="13" y1="19" x2="13" y2="22" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="13" y1="25" x2="13" y2="28" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-
-      {/* Center Tall Building */}
-      <polygon points="21,5 27,1 27,29 21,33" fill="#DC143C" />
-      <polygon points="15,9 21,5 21,33 15,36" fill="#B91C1C" />
-      <line x1="18" y1="13" x2="18" y2="17" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="18" y1="20" x2="18" y2="24" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="18" y1="27" x2="18" y2="31" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="24" y1="8" x2="24" y2="12" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="24" y1="15" x2="24" y2="19" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="24" y1="22" x2="24" y2="26" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
-
-      {/* Right Building */}
-      <polygon points="31,12 36,9 36,30 31,33" fill="#991B1B" />
-      <polygon points="26,15 31,12 31,33 26,36" fill="#7F1D1D" />
-      <line x1="28.5" y1="19" x2="28.5" y2="23" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="28.5" y1="26" x2="28.5" y2="30" stroke="#FDE68A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="33.5" y1="15" x2="33.5" y2="19" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="33.5" y1="22" x2="33.5" y2="26" stroke="#FEF08A" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 export default function Navbar({ language, onLanguageChange, t, onStaffLoginClick }) {
   return (
     <header className="w-full bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
-      <div className="w-full max-w-[1400px] mx-auto px-3 sm:px-4 lg:px-5 h-14 flex items-center justify-between">
+      <div className="w-full max-w-[1400px] mx-auto px-3 sm:px-4 lg:px-5 h-16 flex items-center justify-between">
 
         {/* Brand Block */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <NagarYojanaLogoIcon className="w-7 h-7 sm:w-8 sm:h-8 flex-shrink-0" />
+        <div className="flex items-center gap-3 sm:gap-3.5">
+          <img
+            src="/Biratnagar%20City%20Gate%20Logo.png"
+            alt="Biratnagar City Gate Logo"
+            className="h-11 sm:h-12 w-auto object-contain flex-shrink-0 drop-shadow-sm"
+          />
           <div className="flex flex-col">
             <div className="flex items-baseline tracking-tight font-bold text-xl sm:text-[22px] leading-none">
               <span className="text-[#DC143C]">Nagar</span>
