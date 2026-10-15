@@ -98,20 +98,20 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             console.warn('Could not read user doc from Firestore:', docErr.message);
           }
 
-          // Fallback / Super Admin check
-          if (emailLower === 'pratyushkarki6@gmail.com' || detectedRole === 'SUPER_ADMIN') {
+          // Resolve role strictly from token claims and Firestore database profile
+          if (detectedRole === 'SUPER_ADMIN' || profileData.role === 'SUPER_ADMIN') {
             detectedRole = 'SUPER_ADMIN';
-          } else if (!detectedRole && (profileData.wardNumber || tokenResult.claims?.wardNumber)) {
+          } else if (profileData.wardNumber || tokenResult.claims?.wardNumber) {
             detectedRole = 'WARD_EXEC';
           }
 
-          setUserRole(detectedRole || 'SUPER_ADMIN');
+          setUserRole(detectedRole || profileData.role || 'WARD_EXEC');
           setUserProfile({
             ...profileData,
             email: user.email,
-            displayName: profileData.fullName || user.displayName || (detectedRole === 'SUPER_ADMIN' ? 'Pratyush Karki' : 'Ward Executive'),
-            wardNumber: profileData.wardNumber || tokenResult.claims?.wardNumber || 4,
-            executiveId: profileData.executiveId || `WE-${profileData.wardNumber || 4}-1`,
+            displayName: profileData.fullName || user.displayName || (detectedRole === 'SUPER_ADMIN' ? 'Chief Municipal Admin' : 'Ward Executive'),
+            wardNumber: profileData.wardNumber || tokenResult.claims?.wardNumber || null,
+            executiveId: profileData.executiveId || null,
           });
         } catch (err) {
           console.error('Error resolving user role:', err);
@@ -280,8 +280,10 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     } catch (err) {
       console.error('Sign In Error:', err);
       let msg = 'Failed to sign in. Please verify your municipal credentials.';
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
-        msg = 'Invalid email or password. Please try again.';
+      if (err.code === 'auth/operation-not-allowed') {
+        msg = 'Email/Password sign-in is disabled in Firebase Console. Please enable Email/Password under Authentication → Sign-in method in the Firebase Console.';
+      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        msg = 'Invalid email or password. Please verify your municipal credentials.';
       } else if (err.code === 'auth/user-not-found') {
         msg = 'No municipal staff account registered with this email.';
       } else if (err.code === 'auth/too-many-requests') {
@@ -504,7 +506,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="e.g. pratyushkarki6@gmail.com"
+                    placeholder="e.g. executive.ward4@gmail.com"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#003893] focus:border-transparent transition-all"
                   />
                 </div>
