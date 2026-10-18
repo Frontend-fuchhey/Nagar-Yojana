@@ -63,8 +63,28 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
     const seqNumber = existingExecsSnap.size + 1;
     const executiveId = `WE-${ward}-${seqNumber}`;
 
-    // 3. Generate secure random 8-character temporary password (4 bytes = 8 hex chars)
-    const tempPassword = crypto.randomBytes(4).toString("hex");
+    // 3. Generate secure random 12-character temporary password (mixed uppercase, lowercase, numbers, symbols)
+    const upperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const lowerChars = "abcdefghijkmnopqrstuvwxyz";
+    const digitChars = "23456789";
+    const symbolChars = "!@#$%&*";
+    const allChars = upperChars + lowerChars + digitChars + symbolChars;
+
+    const pwdChars = [
+      upperChars[crypto.randomInt(0, upperChars.length)],
+      lowerChars[crypto.randomInt(0, lowerChars.length)],
+      digitChars[crypto.randomInt(0, digitChars.length)],
+      symbolChars[crypto.randomInt(0, symbolChars.length)],
+    ];
+    for (let i = 4; i < 12; i++) {
+      pwdChars.push(allChars[crypto.randomInt(0, allChars.length)]);
+    }
+    // Fisher-Yates shuffle
+    for (let i = pwdChars.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(0, i + 1);
+      [pwdChars[i], pwdChars[j]] = [pwdChars[j], pwdChars[i]];
+    }
+    const tempPassword = pwdChars.join("");
 
     // 4. Create user in Firebase Auth
     let userRecord;

@@ -1,14 +1,35 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const adminRoutes = require("./routes/adminRoutes");
 const authRoutes = require("./routes/authRoutes");
+const { verifyToken, requireWardExec } = require("./middleware/authMiddleware");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const CORS_ORIGIN = process.env.CORS_ORIGIN;
+const allowedOrigins = CORS_ORIGIN
+  ? CORS_ORIGIN.split(",").map((o) => o.trim())
+  : ["http://localhost:5173", "http://localhost:3000", "*"];
 
-app.use(cors({ origin: CORS_ORIGIN }));
+// Security middleware: set secure HTTP headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+// CORS policy
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS policy violation: origin not allowed"));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Verified civic infrastructure project dataset for Biratnagar Metropolitan City
@@ -148,8 +169,8 @@ let grievances = [
   }
 ];
 
-// PUT /api/projects/:id - Update project progress and status
-app.put("/api/projects/:id", (req, res) => {
+// PUT /api/projects/:id - Update project progress and status (Staff / Ward Exec / Admin only)
+app.put("/api/projects/:id", verifyToken, requireWardExec, (req, res) => {
   try {
     const { id } = req.params;
     const { progress, status } = req.body;
@@ -169,8 +190,8 @@ app.put("/api/projects/:id", (req, res) => {
   }
 });
 
-// GET /api/grievances - Retrieve grievances (optional filter by wardNumber)
-app.get("/api/grievances", (req, res) => {
+// GET /api/grievances - Retrieve grievances (Staff / Ward Exec / Admin only)
+app.get("/api/grievances", verifyToken, requireWardExec, (req, res) => {
   try {
     const wardNumber = req.query.wardNumber ? Number(req.query.wardNumber) : null;
     let list = [...grievances];
@@ -207,8 +228,8 @@ app.post("/api/grievances", (req, res) => {
   }
 });
 
-// PATCH /api/grievances/:id/status - Update grievance status (OPEN, INVESTIGATING, RESOLVED)
-app.patch("/api/grievances/:id/status", (req, res) => {
+// PATCH /api/grievances/:id/status - Update grievance status (Staff / Ward Exec / Admin only)
+app.patch("/api/grievances/:id/status", verifyToken, requireWardExec, (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;

@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Building2,
   Users,
+  UserPlus,
   FileText,
   CheckCircle2,
   AlertTriangle,
@@ -65,6 +66,8 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [execSearch, setExecSearch] = useState('');
   const [execWardFilter, setExecWardFilter] = useState('All');
   const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [adminTaskTab, setAdminTaskTab] = useState('all'); // 'all' | 'executives' | 'lockouts'
+  const [showProvisionForm, setShowProvisionForm] = useState(true);
 
   // Ward Executive: Projects & Grievances State
   const [wardProjects, setWardProjects] = useState([]);
@@ -207,8 +210,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         setWardProjects(filtered.length > 0 ? filtered : allProj.slice(0, 2));
       }
 
-      // Fetch Grievances
-      const grvRes = await fetch(`/api/grievances?wardNumber=${wardNum}`);
+      // Fetch Grievances (Authenticated Staff)
+      const token = currentUser ? await currentUser.getIdToken() : null;
+      const grvRes = await fetch(`/api/grievances?wardNumber=${wardNum}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (grvRes.ok) {
         const grvData = await grvRes.json();
         setWardGrievances(grvData);
@@ -495,9 +501,13 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const handleUpdateProject = async (projectId, newProgress, newStatus) => {
     setUpdatingProjectId(projectId);
     try {
+      const token = currentUser ? await currentUser.getIdToken() : null;
       const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ progress: newProgress, status: newStatus }),
       });
       if (res.ok) {
@@ -531,9 +541,13 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Handler: Update Grievance Status
   const handleUpdateGrievanceStatus = async (grievanceId, newStatus) => {
     try {
+      const token = currentUser ? await currentUser.getIdToken() : null;
       const res = await fetch(`/api/grievances/${grievanceId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
@@ -690,7 +704,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         {/* Command Top Header Bar */}
         <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-[#e0e0e0]">
           <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-            {/* Left: Branding & Role Badge */}
+            {/* Left: Branding */}
             <div className="flex items-center gap-3">
               <img
                 src="/Biratnagar%20City%20Gate%20Logo.png"
@@ -703,9 +717,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     <span className="text-[#DC143C]">Nagar</span>
                     <span className="text-[#156947]">योजना</span>
                   </span>
-                  <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-[#fff0f2] text-[#c4232d] border border-[#ffd6dc]">
-                    Super Admin
-                  </span>
                 </div>
                 <div className="text-[11px] text-[#7a7a7a]">
                   Municipal Command & Executive Governance Hub
@@ -713,24 +724,14 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               </div>
             </div>
 
-            {/* Right: User Information & Exit Actions */}
+            {/* Right: User Information (Name only) & Exit Actions */}
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onReturnToPublic}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
-                title="View public transparency portal"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 text-[#7a7a7a]" />
-                <span>Return to Public Site</span>
-              </button>
-
-              <div className="hidden md:flex flex-col text-right">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center text-xs font-semibold shadow-sm">
+                  PK
+                </div>
                 <span className="text-xs font-semibold text-[#1d1d1f]">
                   Pratyush Karki
-                </span>
-                <span className="text-[10px] text-[#7a7a7a] font-mono">
-                  {currentUser.email}
                 </span>
               </div>
 
@@ -746,98 +747,136 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </div>
         </header>
 
+        {/* Task Navigation Sub-Bar */}
+        <nav className="bg-white/90 backdrop-blur-md border-b border-[#e0e0e0] sticky top-16 z-30" aria-label="Command Hub Tasks">
+          <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 overflow-x-auto">
+            <div className="inline-flex items-center gap-1.5 p-1 bg-[#f5f5f7] border border-[#e0e0e0] rounded-full text-xs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={adminTaskTab === 'all'}
+                onClick={() => setAdminTaskTab('all')}
+                className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  adminTaskTab === 'all'
+                    ? 'bg-[#1d1d1f] text-white shadow-sm'
+                    : 'text-[#7a7a7a] hover:text-[#1d1d1f]'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>All Operations</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={adminTaskTab === 'executives'}
+                onClick={() => setAdminTaskTab('executives')}
+                className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  adminTaskTab === 'executives'
+                    ? 'bg-[#1d1d1f] text-white shadow-sm'
+                    : 'text-[#7a7a7a] hover:text-[#1d1d1f]'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Ward Executives</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none ${
+                  adminTaskTab === 'executives' ? 'bg-white/20 text-white' : 'bg-white text-[#7a7a7a] border border-[#e0e0e0]'
+                }`}>
+                  {executives.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={adminTaskTab === 'lockouts'}
+                onClick={() => setAdminTaskTab('lockouts')}
+                className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  adminTaskTab === 'lockouts'
+                    ? 'bg-[#1d1d1f] text-white shadow-sm'
+                    : 'text-[#7a7a7a] hover:text-[#1d1d1f]'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Locked Accounts</span>
+                {lockouts.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-[#c4232d] text-white">
+                    {lockouts.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <div className="hidden md:flex items-center gap-2 text-xs text-[#7a7a7a]">
+              <span className="w-2 h-2 rounded-full bg-[#156947] animate-pulse" />
+              <span>Municipal System Active</span>
+            </div>
+          </div>
+        </nav>
+
         {/* Main Command Dashboard */}
         <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
-          {/* Executive Sub-Header & Return for Mobile */}
-          <div className="flex sm:hidden justify-between items-center bg-white p-3 rounded-[18px] border border-[#e0e0e0]">
-            <button
-              type="button"
-              onClick={onReturnToPublic}
-              className="inline-flex items-center gap-1.5 text-xs text-[#0066cc]"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Public Site</span>
-            </button>
-            <span className="text-[11px] text-[#7a7a7a] font-mono">
-              {currentUser.email}
-            </span>
-          </div>
 
           {/* Metrics Overview Bar */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
-                  Total Municipal Wards
-                </p>
-                <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
-                  19
-                </p>
-                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
-                  Biratnagar Metropolitan City
-                </p>
+          {(adminTaskTab === 'all' || adminTaskTab === 'executives') && (
+            <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
+                    Total Municipal Wards
+                  </p>
+                  <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
+                    19
+                  </p>
+                  <p className="text-[11px] text-[#7a7a7a] mt-0.5">
+                    Biratnagar Metropolitan City
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-[14px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc]">
+                  <Building2 className="w-6 h-6" />
+                </div>
               </div>
-              <div className="w-12 h-12 rounded-[14px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc]">
-                <Building2 className="w-6 h-6" />
-              </div>
-            </div>
 
-            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
-                  Assigned Ward Executives
-                </p>
-                <p className="text-2xl sm:text-3xl font-semibold text-[#156947] mt-1">
-                  {metrics.assignedCount}{' '}
-                  <span className="text-sm font-normal text-[#7a7a7a]">/ 19</span>
-                </p>
-                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
-                  {metrics.coveragePercent}% Municipal Wards Covered
-                </p>
+              <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
+                    Assigned Ward Executives
+                  </p>
+                  <p className="text-2xl sm:text-3xl font-semibold text-[#156947] mt-1">
+                    {metrics.assignedCount}{' '}
+                    <span className="text-sm font-normal text-[#7a7a7a]">/ 19</span>
+                  </p>
+                  <p className="text-[11px] text-[#7a7a7a] mt-0.5">
+                    {metrics.coveragePercent}% Municipal Wards Covered
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-[14px] bg-[#eefaf3] border border-[#cfeedd] flex items-center justify-center text-[#156947]">
+                  <Users className="w-6 h-6" />
+                </div>
               </div>
-              <div className="w-12 h-12 rounded-[14px] bg-[#eefaf3] border border-[#cfeedd] flex items-center justify-center text-[#156947]">
-                <Users className="w-6 h-6" />
-              </div>
-            </div>
 
-            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
-                  Total Active Credentials
-                </p>
-                <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
-                  {metrics.totalRegistered}
-                </p>
-                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
-                  Verified Executive Accounts
-                </p>
+              <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
+                    Total Active Credentials
+                  </p>
+                  <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
+                    {metrics.totalRegistered}
+                  </p>
+                  <p className="text-[11px] text-[#7a7a7a] mt-0.5">
+                    Verified Executive Accounts
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-[14px] bg-[#f5f0ff] border border-[#e4d9fa] flex items-center justify-center text-[#6b3fc4]">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
               </div>
-              <div className="w-12 h-12 rounded-[14px] bg-[#f5f0ff] border border-[#e4d9fa] flex items-center justify-center text-[#6b3fc4]">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-            </div>
-
-            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
-                  System Security Status
-                </p>
-                <p className="text-lg sm:text-xl font-semibold text-[#156947] mt-1 flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#2e9d6a] animate-pulse" />
-                  Active & Synced
-                </p>
-                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
-                  Firebase Role-Based Auth
-                </p>
-              </div>
-              <div className="w-12 h-12 rounded-[14px] bg-[#fff8e6] border border-[#fbe8b5] flex items-center justify-center text-[#a86a00]">
-                <Sparkles className="w-6 h-6" />
-              </div>
-            </div>
-          </section>
+            </section>
+          )}
 
           {/* Locked Accounts Panel */}
-          <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4">
+          {(adminTaskTab === 'all' || adminTaskTab === 'lockouts') && (
+            <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-[12px] bg-[#fff5f5] border border-[#ffd6d6] flex items-center justify-center text-[#c4232d]">
@@ -904,11 +943,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                       <tr key={l.email} className="bg-white">
                         <td className="px-4 py-3 font-mono text-[#1d1d1f]">{l.email}</td>
                         <td className="px-4 py-3 text-[#333333]">
-                          {l.lockedUntil ? new Date(l.lockedUntil).toLocaleString() : 'â€”'}
+                          {l.lockedUntil ? new Date(l.lockedUntil).toLocaleString() : '—'}
                         </td>
                         <td className="px-4 py-3">
                           <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6]">
-                            {l.failedAttempts ?? l.attempts ?? l.failures ?? 'â€”'}
+                            {l.failedAttempts ?? l.attempts ?? l.failures ?? '—'}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -933,11 +972,14 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               </div>
             )}
           </section>
+          )}
 
-          {/* Dual Column: Provision Form (Left) & Real-time Executives Directory (Right) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Column 1: Provision Ward Executive Form (5 Cols) */}
-            <section className="lg:col-span-5 bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7">
+          {/* Tasks Container: Integrated Ward Executives & Directory */}
+          {(adminTaskTab === 'all' || adminTaskTab === 'executives') && (
+            <div className={showProvisionForm ? "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" : "w-full"}>
+              {/* Column 1: Provision Ward Executive Form */}
+              {showProvisionForm && (
+                <section className="lg:col-span-5 bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7">
               <div className="flex items-center gap-3 mb-5">
                 <div className="w-10 h-10 rounded-[12px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc]">
                   <User className="w-5 h-5" />
@@ -1118,9 +1160,10 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 </button>
               </form>
             </section>
+              )}
 
-            {/* Column 2: Real-time Ward Executives Directory (7 Cols) */}
-            <section className="lg:col-span-7 bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4">
+              {/* Column 2: Real-time Ward Executives Directory */}
+              <section className={`${showProvisionForm ? 'lg:col-span-7' : 'w-full'} bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4`}>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
@@ -1134,14 +1177,29 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={fetchExecutivesViaRest}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors self-start sm:self-auto cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Sync Directory</span>
-                </button>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowProvisionForm((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                      showProvisionForm
+                        ? 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#ebebee] border border-[#e0e0e0]'
+                        : 'bg-[#0066cc] text-white hover:bg-[#0071e3] shadow-sm'
+                    }`}
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{showProvisionForm ? 'Hide Form' : '+ Provision Executive'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={fetchExecutivesViaRest}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Sync</span>
+                  </button>
+                </div>
               </div>
 
               {/* Filters Row */}
@@ -1164,7 +1222,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     onChange={(e) => setExecWardFilter(e.target.value)}
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-8 pr-3 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                   >
-                    <option value="All">All Wards (1â€“19)</option>
+                    <option value="All">All Wards (1–19)</option>
                     {Array.from({ length: 19 }, (_, i) => i + 1).map((w) => (
                       <option key={w} value={w}>
                         Ward {w < 10 ? `0${w}` : w}
@@ -1250,7 +1308,8 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 )}
               </div>
             </section>
-          </div>
+            </div>
+          )}
         </main>
       </div>
     );
