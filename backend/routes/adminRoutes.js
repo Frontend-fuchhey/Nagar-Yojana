@@ -307,24 +307,52 @@ router.delete("/ward-exec/:uid", verifyToken, requireSuperAdmin, async (req, res
 
     const userDocRef = adminDb.collection("users").doc(uid);
     const userSnap = await userDocRef.get();
-    const userData = userSnap.exists ? userSnap.data() : null;
+    let userData = userSnap.exists ? userSnap.data() : null;
 
-    // 1. Delete from Firebase Auth
+    // 1. Delete from Firebase Auth by UID
     try {
       await adminAuth.deleteUser(uid);
     } catch (authErr) {
       if (authErr.code !== "auth/user-not-found") {
-        console.warn("[AdminRoutes] Warning deleting user from Auth:", authErr.message);
+        console.warn("[AdminRoutes] Warning deleting user by UID from Auth:", authErr.message);
       }
     }
 
-    // 2. Delete from Firestore
+    // 1b. If email is known (or queryable), also verify no Auth user remains with that email
+    const emailToClean = userData?.email || req.query?.email || req.body?.email;
+    if (emailToClean) {
+      try {
+        const authRecord = await adminAuth.getUserByEmail(emailToClean.toLowerCase().trim());
+        if (authRecord && authRecord.uid) {
+          await adminAuth.deleteUser(authRecord.uid);
+        }
+      } catch (e) {
+        // user-not-found is expected and fine
+      }
+    }
+
+    // 2. Delete primary user document from Firestore
     await userDocRef.delete();
 
-    // 3. Clean up any lockout document for this email
-    if (userData?.email) {
+    // 2b. Also purge any secondary or stray docs in `users` matching this email
+    if (emailToClean) {
       try {
-        await adminDb.collection("loginLockouts").doc(userData.email.toLowerCase()).delete();
+        const strayDocs = await adminDb
+          .collection("users")
+          .where("email", "==", emailToClean.toLowerCase().trim())
+          .get();
+        const batch = adminDb.batch();
+        strayDocs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      } catch (e) {
+        console.warn("[AdminRoutes] Warning cleaning stray Firestore docs:", e.message);
+      }
+    }
+
+    // 3. Clean up any lockout document for this email
+    if (emailToClean) {
+      try {
+        await adminDb.collection("loginLockouts").doc(emailToClean.toLowerCase().trim()).delete();
       } catch (e) {
         // ignore
       }

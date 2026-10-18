@@ -193,9 +193,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             list.push({ uid: doc.id, ...doc.data() });
           });
           list.sort((a, b) => (Number(a.wardNumber) || 0) - (Number(b.wardNumber) || 0));
-          if (list.length > 0) {
-            setExecutives(list);
-          }
+          setExecutives(list);
           setDirectoryLoading(false);
         },
         (error) => {
@@ -476,7 +474,8 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     setActionFeedback(null);
     try {
       const token = currentUser ? await currentUser.getIdToken() : '';
-      const res = await fetch(`/api/admin/ward-exec/${exec.uid}`, {
+      const emailQuery = exec.email ? `?email=${encodeURIComponent(exec.email)}` : '';
+      const res = await fetch(`/api/admin/ward-exec/${exec.uid}${emailQuery}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
