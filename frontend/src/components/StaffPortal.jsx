@@ -583,7 +583,8 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
       }
 
       if (!res.ok) {
-        throw new Error(data.error || `Failed to provision Ward Executive (Status: ${res.status})`);
+        const errorMsg = data.details ? `${data.error} (${data.details})` : (data.error || `Failed to provision Ward Executive (Status: ${res.status})`);
+        throw new Error(errorMsg);
       }
 
       setProvisionSuccess({
