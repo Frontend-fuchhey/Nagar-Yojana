@@ -6,6 +6,7 @@ import ProjectList from './components/ProjectList';
 import ReportIssueModal from './components/ReportIssueModal';
 import StaffPortal from './components/StaffPortal';
 import { getInitialLanguage } from './utils/translator';
+import { API_BASE_URL } from './apiConfig';
 
 // Initial verified civic infrastructure projects for Biratnagar Metropolitan City
 const DEFAULT_PROJECTS = [
@@ -115,11 +116,12 @@ export default function App() {
     try {
       let response;
       try {
-        response = await fetch('/api/projects');
+        response = await fetch(`${API_BASE_URL}/api/projects`);
         if (!response.ok) {
-          throw new Error(`Proxy returned status ${response.status}`);
+          throw new Error(`Primary endpoint returned status ${response.status}`);
         }
-      } catch (proxyErr) {
+      } catch (primaryErr) {
+        // Fallback for local testing if running on default 5000
         response = await fetch('http://localhost:5000/api/projects');
       }
 

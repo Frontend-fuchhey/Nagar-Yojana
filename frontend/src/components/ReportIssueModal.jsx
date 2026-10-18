@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Flag, CheckCircle2 } from 'lucide-react';
+import { API_BASE_URL } from '../apiConfig';
 
 const FIELD_CLS =
   'w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-[15px] text-[#1d1d1f] placeholder-[#7a7a7a] focus:outline-none focus:ring-2 focus:ring-[#0071e3] focus:border-[#0071e3] transition-shadow';
@@ -37,7 +38,7 @@ export default function ReportIssueModal({ project, isOpen, onClose }) {
     // Dispatch grievance to backend & ward executive queue
     try {
       const wardNum = parseInt(String(project.ward || '').replace(/\D/g, ''), 10) || 4;
-      fetch('/api/grievances', {
+      fetch(`${API_BASE_URL}/api/grievances`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

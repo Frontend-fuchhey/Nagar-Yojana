@@ -39,8 +39,9 @@ import {
   Send,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
+import { API_BASE_URL } from '../apiConfig';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = API_BASE_URL;
 
 export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Authentication & User State
