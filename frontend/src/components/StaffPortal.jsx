@@ -40,6 +40,8 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Authentication & User State
   const [currentUser, setCurrentUser] = useState(null);
@@ -145,7 +147,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     try {
       if (!currentUser) return;
       const token = await currentUser.getIdToken();
-      const res = await fetch('/api/admin/ward-execs', {
+      const res = await fetch(`${API_BASE}/api/admin/ward-execs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -215,7 +217,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const loadWardWorkspaceData = async (wardNum) => {
     try {
       // Fetch Ward Projects
-      const projRes = await fetch('/api/projects');
+      const projRes = await fetch(`${API_BASE}/api/projects`);
       if (projRes.ok) {
         const allProj = await projRes.json();
         const wardStr = `Ward ${wardNum < 10 ? '0' + wardNum : wardNum}`;
@@ -232,7 +234,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
       // Fetch Grievances (Authenticated Staff)
       const token = currentUser ? await currentUser.getIdToken() : null;
-      const grvRes = await fetch(`/api/grievances?wardNumber=${wardNum}`, {
+      const grvRes = await fetch(`${API_BASE}/api/grievances?wardNumber=${wardNum}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (grvRes.ok) {
@@ -259,7 +261,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     try {
       if (!currentUser) return;
       const token = await currentUser.getIdToken();
-      const res = await fetch('/api/admin/lockouts', {
+      const res = await fetch(`${API_BASE}/api/admin/lockouts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -285,7 +287,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     setLockoutFeedback(null);
     try {
       const token = await currentUser.getIdToken();
-      const res = await fetch('/api/admin/lockouts/unlock', {
+      const res = await fetch(`${API_BASE}/api/admin/lockouts/unlock`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -360,7 +362,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     `Too many failed attempts. This account is locked until ${new Date(until).toLocaleString()}. Please contact the Super Admin to unlock it.`;
 
   const callAuthApi = async (path, body, token) => {
-    const res = await fetch(`/api/auth/${path}`, {
+    const res = await fetch(`${API_BASE}/api/auth/${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -475,7 +477,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     try {
       const token = currentUser ? await currentUser.getIdToken() : '';
       const emailQuery = exec.email ? `?email=${encodeURIComponent(exec.email)}` : '';
-      const res = await fetch(`/api/admin/ward-exec/${exec.uid}${emailQuery}`, {
+      const res = await fetch(`${API_BASE}/api/admin/ward-exec/${exec.uid}${emailQuery}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -510,7 +512,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     setActionFeedback(null);
     try {
       const token = currentUser ? await currentUser.getIdToken() : '';
-      const res = await fetch(`/api/admin/ward-exec/${exec.uid}/resend`, {
+      const res = await fetch(`${API_BASE}/api/admin/ward-exec/${exec.uid}/resend`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -564,7 +566,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         executiveId: dynamicPreviewId,
       };
 
-      const res = await fetch('/api/admin/provision-ward-exec', {
+      const res = await fetch(`${API_BASE}/api/admin/provision-ward-exec`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -613,7 +615,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     setUpdatingProjectId(projectId);
     try {
       const token = currentUser ? await currentUser.getIdToken() : null;
-      const res = await fetch(`/api/projects/${projectId}`, {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -653,7 +655,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const handleUpdateGrievanceStatus = async (grievanceId, newStatus) => {
     try {
       const token = currentUser ? await currentUser.getIdToken() : null;
-      const res = await fetch(`/api/grievances/${grievanceId}/status`, {
+      const res = await fetch(`${API_BASE}/api/grievances/${grievanceId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
