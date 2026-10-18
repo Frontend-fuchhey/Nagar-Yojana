@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const admin = require("firebase-admin");
 const { getAuth } = require("firebase-admin/auth");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 require("dotenv").config();
@@ -16,6 +16,9 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     if (rawKey.startsWith("{")) {
       serviceAccount = JSON.parse(rawKey);
+    } else if (fs.existsSync(path.resolve(__dirname, rawKey)) || fs.existsSync(rawKey)) {
+      const filePath = fs.existsSync(rawKey) ? rawKey : path.resolve(__dirname, rawKey);
+      serviceAccount = JSON.parse(fs.readFileSync(filePath, "utf8"));
     } else {
       const decoded = Buffer.from(rawKey, "base64").toString("utf8");
       serviceAccount = JSON.parse(decoded);
@@ -61,7 +64,10 @@ if (serviceAccount) {
     });
     isFirebaseInitialized = true;
     admin.auth = (app) => (app ? getAuth(app) : getAuth());
-    admin.firestore = Object.assign((app) => (app ? getFirestore(app) : getFirestore()), { FieldValue });
+    admin.firestore = Object.assign((app) => (app ? getFirestore(app) : getFirestore()), {
+      FieldValue,
+      Timestamp
+    });
     adminAuth = admin.auth();
     adminDb = admin.firestore();
     console.log(`[FirebaseAdmin] Successfully initialized Firebase Admin for project: ${serviceAccount.project_id || "unknown"}`);
