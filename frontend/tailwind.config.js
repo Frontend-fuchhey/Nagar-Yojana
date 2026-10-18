@@ -7,7 +7,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: '#F8F9FA',
+        canvas: '#ffffff',
+        parchment: '#f5f5f7',
+        pearl: '#fafafc',
+        ink: {
+          DEFAULT: '#1d1d1f',
+          80: '#333333',
+          48: '#7a7a7a',
+        },
+        hairline: '#e0e0e0',
+        action: {
+          DEFAULT: '#0066cc',
+          focus: '#0071e3',
+          dark: '#2997ff',
+        },
         simrik: {
           DEFAULT: '#DC143C',
           50: '#fff1f2',
@@ -23,11 +36,18 @@ export default {
           700: '#15803d',
         },
       },
+      borderRadius: {
+        apple: '18px',
+        'apple-md': '11px',
+      },
       fontFamily: {
         sans: [
-          'Inter',
+          '"SF Pro Text"',
+          '"SF Pro Display"',
+          'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
+          'Inter',
           '"Segoe UI"',
           'Roboto',
           'Helvetica',

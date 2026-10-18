@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import {
   signInWithEmailAndPassword,
   signOut,
@@ -48,6 +48,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [lockInfo, setLockInfo] = useState(null); // { email, until } when an email is locked
 
   // Super Admin: Provisioning Form State
   const [formName, setFormName] = useState('');
@@ -223,6 +224,60 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     }
   }, [userRole, userProfile]);
 
+  // 4. Super Admin: Locked Accounts
+  const [lockouts, setLockouts] = useState([]);
+  const [lockoutFeedback, setLockoutFeedback] = useState(null); // { type, message }
+  const [unlockingEmail, setUnlockingEmail] = useState(null);
+
+  const fetchLockouts = async () => {
+    try {
+      if (!currentUser) return;
+      const token = await currentUser.getIdToken();
+      const res = await fetch('/api/admin/lockouts', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : data?.lockouts || [];
+        setLockouts(list);
+      }
+    } catch (err) {
+      console.warn('Could not fetch lockouts:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (userRole !== 'SUPER_ADMIN' || !currentUser) return;
+    fetchLockouts();
+    const interval = setInterval(fetchLockouts, 30000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole, currentUser]);
+
+  const handleUnlock = async (email) => {
+    setUnlockingEmail(email);
+    setLockoutFeedback(null);
+    try {
+      const token = await currentUser.getIdToken();
+      const res = await fetch('/api/admin/lockouts/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error(`Unlock failed (${res.status})`);
+      setLockoutFeedback({ type: 'success', message: `${email} has been unlocked.` });
+      await fetchLockouts();
+    } catch (err) {
+      setLockoutFeedback({ type: 'error', message: err.message || 'Failed to unlock account.' });
+    } finally {
+      setUnlockingEmail(null);
+      setTimeout(() => setLockoutFeedback(null), 4000);
+    }
+  };
+
   // Compute Live Dynamic Preview of Unique Executive ID
   const dynamicPreviewId = useMemo(() => {
     const ward = Number(formWard) || 4;
@@ -270,22 +325,96 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     });
   }, [executives, execWardFilter, execSearch]);
 
+  // Lockout helpers (server-side, per email: 3 failed attempts => 24h lock)
+  const normalizedLoginEmail = loginEmail.trim().toLowerCase();
+  const isLoginLocked =
+    !!lockInfo && lockInfo.email === normalizedLoginEmail && lockInfo.until > Date.now();
+
+  const lockMessage = (until) =>
+    `Too many failed attempts. This account is locked until ${new Date(until).toLocaleString()}. Please contact the Super Admin to unlock it.`;
+
+  const callAuthApi = async (path, body, token) => {
+    const res = await fetch(`/api/auth/${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body || {}),
+    });
+    if (!res.ok) throw new Error(`auth api ${path} failed (${res.status})`);
+    return res.json();
+  };
+
+  // Check lockout status when the user leaves the email field
+  const handleEmailBlur = async () => {
+    if (!normalizedLoginEmail) return;
+    try {
+      const status = await callAuthApi('lockout-status', { email: normalizedLoginEmail });
+      if (status.locked) {
+        setLockInfo({ email: normalizedLoginEmail, until: status.lockedUntil });
+        setLoginError(lockMessage(status.lockedUntil));
+      }
+    } catch (err) {
+      console.warn('Lockout status check unavailable:', err.message);
+    }
+  };
+
   // Handler: Sign In
   const handleSignIn = async (e) => {
     e.preventDefault();
     setLoginError('');
     setLoginSubmitting(true);
+    const email = loginEmail.trim();
+    const emailKey = email.toLowerCase();
     try {
-      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+      // 1. Refuse to attempt sign-in if this email is locked
+      try {
+        const status = await callAuthApi('lockout-status', { email: emailKey });
+        if (status.locked) {
+          setLockInfo({ email: emailKey, until: status.lockedUntil });
+          setLoginError(lockMessage(status.lockedUntil));
+          return;
+        }
+      } catch (statusErr) {
+        console.warn('Lockout status check unavailable:', statusErr.message);
+      }
+
+      // 2. Attempt sign-in
+      const cred = await signInWithEmailAndPassword(auth, email, loginPassword);
+
+      // 3. Success: reset the failure counter
+      try {
+        const token = await cred.user.getIdToken();
+        await callAuthApi('clear-failures', {}, token);
+      } catch (clearErr) {
+        console.warn('Could not clear failed attempts:', clearErr.message);
+      }
+      setLockInfo(null);
     } catch (err) {
       console.error('Sign In Error:', err);
       let msg = 'Failed to sign in. Please verify your municipal credentials.';
+      const wrongCredentials =
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/user-not-found';
+
       if (err.code === 'auth/operation-not-allowed') {
-        msg = 'Email/Password sign-in is disabled in Firebase Console. Please enable Email/Password under Authentication → Sign-in method in the Firebase Console.';
-      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
-        msg = 'Invalid email or password. Please verify your municipal credentials.';
-      } else if (err.code === 'auth/user-not-found') {
-        msg = 'No municipal staff account registered with this email.';
+        msg = 'Email/Password sign-in is disabled in Firebase Console. Please enable Email/Password under Authentication â†’ Sign-in method in the Firebase Console.';
+      } else if (wrongCredentials) {
+        msg = 'Incorrect email or password.';
+        try {
+          const status = await callAuthApi('record-failure', { email: emailKey });
+          if (status.locked) {
+            setLockInfo({ email: emailKey, until: status.lockedUntil });
+            msg = lockMessage(status.lockedUntil);
+          } else {
+            const n = status.remainingAttempts;
+            msg = `Incorrect email or password. ${n} attempt${n === 1 ? '' : 's'} remaining.`;
+          }
+        } catch (recordErr) {
+          console.warn('Could not record failed attempt:', recordErr.message);
+        }
       } else if (err.code === 'auth/too-many-requests') {
         msg = 'Too many failed attempts. Account temporarily locked for security.';
       }
@@ -420,10 +549,10 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Loading Screen while resolving Auth state
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-slate-300 text-sm font-medium tracking-wide">
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-[#0066cc] border-t-transparent rounded-full animate-spin" />
+          <p className="text-[#7a7a7a] text-sm tracking-tight">
             Authenticating Municipal Staff Portal...
           </p>
         </div>
@@ -436,104 +565,91 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // ==========================================
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-[#1E293B] to-[#0A0F1D] text-slate-100 flex flex-col justify-between selection:bg-[#DC143C] selection:text-white">
-        {/* Top Minimal Banner */}
-        <div className="w-full max-w-6xl mx-auto px-4 py-6 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onReturnToPublic}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-all backdrop-blur-md"
-          >
-            <ArrowLeft className="w-4 h-4 text-[#DC143C]" />
-            <span>Return to Public Website</span>
-          </button>
-
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-mono">Municipal Portal Gateway</span>
-          </div>
-        </div>
+      <div className="min-h-screen bg-white text-[#1d1d1f] flex flex-col justify-between selection:bg-[#0066cc] selection:text-white">
+        <div className="h-6" />
 
         {/* Central Sign-In Container */}
         <div className="w-full max-w-md mx-auto px-4 py-8">
-          <div className="bg-white/95 text-slate-900 rounded-3xl p-7 sm:p-9 shadow-2xl border border-slate-200/80 backdrop-blur-xl relative overflow-hidden">
-            {/* National Accent Ribbon (Biratnagar & Nepal Flag Colors: #003893 & #DC143C) */}
-            <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-[#003893] via-[#DC143C] to-[#156947]" />
-
+          <div className="bg-white text-[#1d1d1f] rounded-[18px] p-8 sm:p-10 border border-[#e0e0e0] shadow-[0_2px_24px_rgba(0,0,0,0.06)]">
             {/* Header Block with City Gate Logo */}
-            <div className="text-center mb-6 pt-2">
-              <div className="inline-flex items-center justify-center p-2 rounded-2xl bg-slate-50 border border-slate-100 shadow-sm mb-3">
-                <img
-                  src="/Biratnagar%20City%20Gate%20Logo.png"
-                  alt="Biratnagar City Gate Logo"
-                  className="h-16 w-auto object-contain drop-shadow"
-                />
-              </div>
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center justify-center gap-1.5">
+            <div className="text-center mb-8">
+              <img
+                src="/Biratnagar%20City%20Gate%20Logo.png"
+                alt="Biratnagar City Gate Logo"
+                className="h-16 w-auto object-contain mx-auto mb-4"
+              />
+              <h1 className="text-[28px] font-semibold tracking-tight flex items-center justify-center gap-1.5">
                 <span className="text-[#DC143C]">Nagar</span>
                 <span className="text-[#156947]">योजना</span>
-                <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-900 text-white ml-1">
-                  Staff
-                </span>
               </h1>
-              <p className="text-xs text-slate-500 font-medium mt-1">
+              <p className="text-sm text-[#7a7a7a] mt-2">
                 Biratnagar Metropolitan City · Municipal Command Gateway
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-xs text-[#7a7a7a] mt-0.5">
                 विराटनगर महानगरपालिका · आन्तरिक प्रशासन
               </p>
             </div>
 
             {/* Error Banner */}
             {loginError && (
-              <div className="mb-5 p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-[#DC143C] flex-shrink-0 mt-0.5" />
-                <span className="leading-relaxed font-medium">{loginError}</span>
+              <div
+                role="alert"
+                className="mb-5 p-3.5 bg-[#fff5f5] border border-[#ffd6d6] rounded-[11px] text-xs text-[#c4232d] flex items-start gap-2.5"
+              >
+                {isLoginLocked ? (
+                  <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                )}
+                <span className="leading-relaxed">{loginError}</span>
               </div>
             )}
 
             {/* Login Form */}
             <form onSubmit={handleSignIn} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span>Official Municipal Email</span>
-                  <span className="text-[11px] text-slate-400 font-normal">Gmail or .gov.np</span>
+                <label htmlFor="staff-email" className="block text-xs font-semibold text-[#333333] mb-1.5">
+                  Official Municipal Email
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
+                    id="staff-email"
                     type="email"
                     required
+                    autoComplete="username"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="e.g. executive.ward4@gmail.com"
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#003893] focus:border-transparent transition-all"
+                    onBlur={handleEmailBlur}
+                    disabled={loginSubmitting || isLoginLocked}
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span>Passphrase / Password</span>
-                  <span className="text-[11px] text-slate-400 font-normal">Encrypted</span>
+                <label htmlFor="staff-password" className="block text-xs font-semibold text-[#333333] mb-1.5">
+                  Passphrase / Password
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Lock className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
+                    id="staff-password"
                     type="password"
                     required
+                    autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#003893] focus:border-transparent transition-all"
+                    disabled={loginSubmitting || isLoginLocked}
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={loginSubmitting}
-                className="w-full mt-2 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-[#003893] to-[#0A4BB5] hover:from-[#002D75] hover:to-[#003893] shadow-lg shadow-blue-900/25 transition-all focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:opacity-60 cursor-pointer"
+                disabled={loginSubmitting || isLoginLocked}
+                className="w-full mt-2 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-full text-[15px] font-medium text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0071e3] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {loginSubmitting ? (
                   <>
@@ -542,15 +658,15 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                    <ShieldCheck className="w-4 h-4" />
                     <span>Sign In to Staff Portal</span>
                   </>
                 )}
               </button>
             </form>
 
-            <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-              <p className="text-[11px] text-slate-500 leading-relaxed">
+            <div className="mt-7 pt-5 border-t border-[#f0f0f0] text-center">
+              <p className="text-[11px] text-[#7a7a7a] leading-relaxed">
                 Authorized municipal staff and designated ward executives only. Unauthorized access attempts are audited and logged.
               </p>
             </div>
@@ -558,7 +674,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         </div>
 
         {/* Footer */}
-        <div className="w-full max-w-6xl mx-auto px-4 py-4 text-center text-xs text-slate-500">
+        <div className="w-full max-w-6xl mx-auto px-4 py-4 text-center text-xs text-[#7a7a7a]">
           Biratnagar Metropolitan City (विराटनगर महानगरपालिका) · Nagarयोजना Command System
         </div>
       </div>
@@ -570,28 +686,28 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // ==========================================
   if (userRole === 'SUPER_ADMIN') {
     return (
-      <div className="min-h-screen bg-[#0B1120] text-slate-100 selection:bg-[#DC143C] selection:text-white flex flex-col font-sans">
+      <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#0066cc] selection:text-white flex flex-col font-sans">
         {/* Command Top Header Bar */}
-        <header className="sticky top-0 z-40 bg-[#0F172A]/90 backdrop-blur-md border-b border-slate-800">
+        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-[#e0e0e0]">
           <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
             {/* Left: Branding & Role Badge */}
             <div className="flex items-center gap-3">
               <img
                 src="/Biratnagar%20City%20Gate%20Logo.png"
                 alt="City Gate Logo"
-                className="h-10 w-auto object-contain drop-shadow"
+                className="h-10 w-auto object-contain"
               />
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-black text-lg text-white tracking-tight">
+                  <span className="font-semibold text-lg tracking-tight">
                     <span className="text-[#DC143C]">Nagar</span>
-                    <span className="text-[#2E8B57]">योजना</span>
+                    <span className="text-[#156947]">योजना</span>
                   </span>
-                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#DC143C]/20 text-[#FF6B81] border border-[#DC143C]/40">
+                  <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-[#fff0f2] text-[#c4232d] border border-[#ffd6dc]">
                     Super Admin
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-[11px] text-[#7a7a7a]">
                   Municipal Command & Executive Governance Hub
                 </div>
               </div>
@@ -602,18 +718,18 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               <button
                 type="button"
                 onClick={onReturnToPublic}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 border border-slate-700 transition-colors"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
                 title="View public transparency portal"
               >
-                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                <ArrowLeft className="w-3.5 h-3.5 text-[#7a7a7a]" />
                 <span>Return to Public Site</span>
               </button>
 
               <div className="hidden md:flex flex-col text-right">
-                <span className="text-xs font-semibold text-slate-200">
+                <span className="text-xs font-semibold text-[#1d1d1f]">
                   Pratyush Karki
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-[10px] text-[#7a7a7a] font-mono">
                   {currentUser.email}
                 </span>
               </div>
@@ -621,7 +737,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               <button
                 type="button"
                 onClick={handleSignOut}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-300 hover:text-white bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-[#c4232d] bg-[#fff5f5] hover:bg-[#ffe9e9] border border-[#ffd6d6] transition-colors cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Sign Out</span>
@@ -633,108 +749,204 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         {/* Main Command Dashboard */}
         <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
           {/* Executive Sub-Header & Return for Mobile */}
-          <div className="flex sm:hidden justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-800">
+          <div className="flex sm:hidden justify-between items-center bg-white p-3 rounded-[18px] border border-[#e0e0e0]">
             <button
               type="button"
               onClick={onReturnToPublic}
-              className="inline-flex items-center gap-1.5 text-xs text-slate-300"
+              className="inline-flex items-center gap-1.5 text-xs text-[#0066cc]"
             >
-              <ArrowLeft className="w-3.5 h-3.5 text-[#DC143C]" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               <span>Public Site</span>
             </button>
-            <span className="text-[11px] text-slate-400 font-mono">
+            <span className="text-[11px] text-[#7a7a7a] font-mono">
               {currentUser.email}
             </span>
           </div>
 
           {/* Metrics Overview Bar */}
           <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-sm">
+            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
                   Total Municipal Wards
                 </p>
-                <p className="text-2xl sm:text-3xl font-extrabold text-white mt-1">
+                <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
                   19
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
                   Biratnagar Metropolitan City
                 </p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+              <div className="w-12 h-12 rounded-[14px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc]">
                 <Building2 className="w-6 h-6" />
               </div>
             </div>
 
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-sm">
+            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
                   Assigned Ward Executives
                 </p>
-                <p className="text-2xl sm:text-3xl font-extrabold text-emerald-400 mt-1">
+                <p className="text-2xl sm:text-3xl font-semibold text-[#156947] mt-1">
                   {metrics.assignedCount}{' '}
-                  <span className="text-sm font-normal text-slate-500">/ 19</span>
+                  <span className="text-sm font-normal text-[#7a7a7a]">/ 19</span>
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
                   {metrics.coveragePercent}% Municipal Wards Covered
                 </p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <div className="w-12 h-12 rounded-[14px] bg-[#eefaf3] border border-[#cfeedd] flex items-center justify-center text-[#156947]">
                 <Users className="w-6 h-6" />
               </div>
             </div>
 
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-sm">
+            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
                   Total Active Credentials
                 </p>
-                <p className="text-2xl sm:text-3xl font-extrabold text-white mt-1">
+                <p className="text-2xl sm:text-3xl font-semibold text-[#1d1d1f] mt-1">
                   {metrics.totalRegistered}
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
                   Verified Executive Accounts
                 </p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+              <div className="w-12 h-12 rounded-[14px] bg-[#f5f0ff] border border-[#e4d9fa] flex items-center justify-center text-[#6b3fc4]">
                 <ShieldCheck className="w-6 h-6" />
               </div>
             </div>
 
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-sm">
+            <div className="bg-white border border-[#e0e0e0] rounded-[18px] p-4 sm:p-5 flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <p className="text-xs font-medium text-[#7a7a7a] uppercase tracking-wider">
                   System Security Status
                 </p>
-                <p className="text-lg sm:text-xl font-bold text-emerald-400 mt-1 flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <p className="text-lg sm:text-xl font-semibold text-[#156947] mt-1 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#2e9d6a] animate-pulse" />
                   Active & Synced
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-[11px] text-[#7a7a7a] mt-0.5">
                   Firebase Role-Based Auth
                 </p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <div className="w-12 h-12 rounded-[14px] bg-[#fff8e6] border border-[#fbe8b5] flex items-center justify-center text-[#a86a00]">
                 <Sparkles className="w-6 h-6" />
               </div>
             </div>
           </section>
 
+          {/* Locked Accounts Panel */}
+          <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-[12px] bg-[#fff5f5] border border-[#ffd6d6] flex items-center justify-center text-[#c4232d]">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
+                    <span>Locked Accounts</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-[#f5f5f7] text-[#1d1d1f] border border-[#e0e0e0]">
+                      {lockouts.length}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#7a7a7a]">
+                    Accounts locked after 3 failed sign-in attempts. Unlock to restore access.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={fetchLockouts}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors self-start sm:self-auto cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {lockoutFeedback && (
+              <div
+                role="status"
+                className={`p-3 rounded-[11px] text-xs flex items-center gap-2 border ${
+                  lockoutFeedback.type === 'error'
+                    ? 'bg-[#fff5f5] border-[#ffd6d6] text-[#c4232d]'
+                    : 'bg-[#eefaf3] border-[#cfeedd] text-[#156947]'
+                }`}
+              >
+                {lockoutFeedback.type === 'error' ? (
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                )}
+                <span>{lockoutFeedback.message}</span>
+              </div>
+            )}
+
+            {lockouts.length === 0 ? (
+              <div className="py-8 px-4 text-center rounded-[14px] bg-[#fafafc] border border-dashed border-[#e0e0e0]">
+                <CheckCircle2 className="w-7 h-7 text-[#2e9d6a] mx-auto mb-2" />
+                <p className="text-sm font-semibold text-[#1d1d1f]">No locked accounts</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-[14px] border border-[#e0e0e0]">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#fafafc] text-[#7a7a7a] uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="px-4 py-2.5 font-semibold">Email</th>
+                      <th className="px-4 py-2.5 font-semibold">Locked Until</th>
+                      <th className="px-4 py-2.5 font-semibold">Failed Attempts</th>
+                      <th className="px-4 py-2.5 font-semibold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#f0f0f0]">
+                    {lockouts.map((l) => (
+                      <tr key={l.email} className="bg-white">
+                        <td className="px-4 py-3 font-mono text-[#1d1d1f]">{l.email}</td>
+                        <td className="px-4 py-3 text-[#333333]">
+                          {l.lockedUntil ? new Date(l.lockedUntil).toLocaleString() : 'â€”'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6]">
+                            {l.failedAttempts ?? l.attempts ?? l.failures ?? 'â€”'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleUnlock(l.email)}
+                            disabled={unlockingEmail === l.email}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors disabled:opacity-60 cursor-pointer"
+                          >
+                            {unlockingEmail === l.email ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Lock className="w-3.5 h-3.5" />
+                            )}
+                            <span>Unlock</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
           {/* Dual Column: Provision Form (Left) & Real-time Executives Directory (Right) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Column 1: Provision Ward Executive Form (5 Cols) */}
-            <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-lg relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-emerald-500" />
-
+            <section className="lg:col-span-5 bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7">
               <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                <div className="w-10 h-10 rounded-[12px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc]">
                   <User className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white tracking-tight">
+                  <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight">
                     Provision Ward Executive
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-[#7a7a7a]">
                     Issue credentials & onboard ward executive authority
                   </p>
                 </div>
@@ -742,25 +954,25 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
               {/* Success Alert */}
               {provisionSuccess && (
-                <div className="mb-5 p-4 bg-emerald-950/40 border border-emerald-700/50 rounded-2xl text-xs text-emerald-200 space-y-1.5">
-                  <div className="flex items-center gap-2 font-bold text-emerald-300">
+                <div className="mb-5 p-4 bg-[#eefaf3] border border-[#cfeedd] rounded-[14px] text-xs text-[#156947] space-y-1.5">
+                  <div className="flex items-center gap-2 font-semibold">
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Executive Successfully Provisioned!</span>
                   </div>
-                  <p className="text-slate-300">
+                  <p className="text-[#333333]">
                     Assigned Unique ID:{' '}
-                    <strong className="text-white font-mono bg-emerald-900/60 px-2 py-0.5 rounded">
+                    <strong className="text-[#1d1d1f] font-mono bg-white border border-[#cfeedd] px-2 py-0.5 rounded">
                       {provisionSuccess.executiveId}
                     </strong>
                   </p>
-                  <p className="text-slate-300">
+                  <p className="text-[#333333]">
                     Designated Ward:{' '}
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-[#1d1d1f]">
                       Ward {provisionSuccess.wardNumber}
                     </span>{' '}
                     ({provisionSuccess.fullName})
                   </p>
-                  <p className="text-[11px] text-emerald-400">
+                  <p className="text-[11px] text-[#156947]">
                     {provisionSuccess.emailSent
                       ? `Credentials and temporary password dispatched to ${provisionSuccess.email}`
                       : `Created user ${provisionSuccess.email} in Firebase Auth system.`}
@@ -770,11 +982,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
               {/* Error Alert */}
               {provisionError && (
-                <div className="mb-5 p-4 bg-red-950/40 border border-red-800/50 rounded-2xl text-xs text-red-200 flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <div className="mb-5 p-4 bg-[#fff5f5] border border-[#ffd6d6] rounded-[14px] text-xs text-[#c4232d] flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    <p className="font-bold text-red-300">Provisioning Failed</p>
-                    <p className="text-slate-300">{provisionError}</p>
+                    <p className="font-semibold">Provisioning Failed</p>
+                    <p className="text-[#333333]">{provisionError}</p>
                   </div>
                 </div>
               )}
@@ -782,53 +994,53 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               <form onSubmit={handleProvisionWardExec} className="space-y-4">
                 {/* Full Name */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                     Executive Full Name *
                   </label>
                   <div className="relative">
-                    <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <User className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       required
                       value={formName}
                       onChange={(e) => setFormName(e.target.value)}
                       placeholder="e.g. Santosh Adhikari"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
                 </div>
 
                 {/* Email Address */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                     Official Executive Gmail *
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="email"
                       required
                       value={formEmail}
                       onChange={(e) => setFormEmail(e.target.value)}
                       placeholder="e.g. exec.ward4.biratnagar@gmail.com"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
                 </div>
 
                 {/* Contact Phone */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                     Contact Mobile Number
                   </label>
                   <div className="relative">
-                    <Phone className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Phone className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="tel"
                       value={formPhone}
                       onChange={(e) => setFormPhone(e.target.value)}
                       placeholder="98XXXXXXXX"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
                 </div>
@@ -836,13 +1048,13 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 {/* Ward Selection & Service Period */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                       Designated Ward *
                     </label>
                     <select
                       value={formWard}
                       onChange={(e) => setFormWard(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     >
                       {Array.from({ length: 19 }, (_, i) => i + 1).map((w) => (
                         <option key={w} value={w}>
@@ -853,34 +1065,34 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                       Tenure / Service Period
                     </label>
                     <div className="relative">
-                      <Calendar className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Calendar className="w-3.5 h-3.5 text-[#7a7a7a] absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
                         value={formTenure}
                         onChange={(e) => setFormTenure(e.target.value)}
                         placeholder="2081 - 2086 B.S."
-                        className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-8 pr-2.5 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                       />
                     </div>
                   </div>
                 </div>
 
                 {/* LIVE DYNAMIC PREVIEW OF UNIQUE ID */}
-                <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950/60 to-slate-950 border border-blue-900/60 flex items-center justify-between">
+                <div className="p-4 rounded-[14px] bg-[#f5f5f7] border border-[#e0e0e0] flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <span className="text-[11px] font-semibold text-blue-300 uppercase tracking-wider block">
+                    <span className="text-[11px] font-semibold text-[#0066cc] uppercase tracking-wider block">
                       Live Dynamic ID Preview
                     </span>
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-[#7a7a7a]">
                       Auto-computed municipal index
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="px-3 py-1.5 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-400/30 text-sm font-mono font-bold tracking-wider shadow-inner">
+                    <span className="px-3 py-1.5 rounded-[11px] bg-white text-[#0066cc] border border-[#d6e6fb] text-sm font-mono font-bold tracking-wider">
                       {dynamicPreviewId}
                     </span>
                   </div>
@@ -890,7 +1102,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 <button
                   type="submit"
                   disabled={provisionLoading}
-                  className="w-full py-3 px-4 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 shadow-lg shadow-blue-900/30 transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+                  className="w-full py-3 px-4 rounded-full text-[15px] font-medium text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
                 >
                   {provisionLoading ? (
                     <>
@@ -908,16 +1120,16 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             </section>
 
             {/* Column 2: Real-time Ward Executives Directory (7 Cols) */}
-            <section className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-lg space-y-4">
+            <section className="lg:col-span-7 bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
                     <span>Ward Executives Directory</span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-[#f5f5f7] text-[#1d1d1f] border border-[#e0e0e0]">
                       {filteredExecutives.length} Active
                     </span>
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-[#7a7a7a]">
                     Real-time registered authorities across Biratnagar wards
                   </p>
                 </div>
@@ -925,7 +1137,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 <button
                   type="button"
                   onClick={fetchExecutivesViaRest}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors self-start sm:self-auto"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors self-start sm:self-auto cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Sync Directory</span>
@@ -935,24 +1147,24 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               {/* Filters Row */}
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-2">
                 <div className="sm:col-span-7 relative">
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Search className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={execSearch}
                     onChange={(e) => setExecSearch(e.target.value)}
                     placeholder="Search by name, ID, email, phone..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-9 pr-3 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                   />
                 </div>
 
                 <div className="sm:col-span-5 relative">
-                  <Filter className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Filter className="w-3.5 h-3.5 text-[#7a7a7a] absolute left-3 top-1/2 -translate-y-1/2" />
                   <select
                     value={execWardFilter}
                     onChange={(e) => setExecWardFilter(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-8 pr-3 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                   >
-                    <option value="All">All Wards (1–19)</option>
+                    <option value="All">All Wards (1â€“19)</option>
                     {Array.from({ length: 19 }, (_, i) => i + 1).map((w) => (
                       <option key={w} value={w}>
                         Ward {w < 10 ? `0${w}` : w}
@@ -965,17 +1177,17 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               {/* Table / Cards Container */}
               <div className="pt-2">
                 {directoryLoading ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
-                    <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
+                  <div className="py-12 flex flex-col items-center justify-center text-[#7a7a7a] gap-2">
+                    <RefreshCw className="w-6 h-6 animate-spin text-[#0066cc]" />
                     <span className="text-xs">Loading directory...</span>
                   </div>
                 ) : filteredExecutives.length === 0 ? (
-                  <div className="py-12 px-4 text-center rounded-2xl bg-slate-950/60 border border-dashed border-slate-800">
-                    <Users className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                    <p className="text-sm font-semibold text-slate-300">
+                  <div className="py-12 px-4 text-center rounded-[14px] bg-[#fafafc] border border-dashed border-[#e0e0e0]">
+                    <Users className="w-8 h-8 text-[#7a7a7a] mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-[#1d1d1f]">
                       No Ward Executives Found
                     </p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                    <p className="text-xs text-[#7a7a7a] mt-1 max-w-sm mx-auto">
                       {execSearch || execWardFilter !== 'All'
                         ? 'No executives match your search or ward filter criteria.'
                         : 'No ward executives have been provisioned yet. Use the form on the left to onboard one.'}
@@ -986,37 +1198,37 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     {filteredExecutives.map((exec, idx) => (
                       <div
                         key={exec.uid || idx}
-                        className="p-4 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border border-slate-800/80 hover:border-slate-700 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        className="p-4 rounded-[14px] bg-white hover:bg-[#fafafc] border border-[#e0e0e0] transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-blue-400 font-mono font-bold text-xs flex-shrink-0 mt-0.5">
+                          <div className="w-10 h-10 rounded-[12px] bg-[#eef5ff] border border-[#d6e6fb] flex items-center justify-center text-[#0066cc] font-mono font-bold text-xs flex-shrink-0 mt-0.5">
                             W{exec.wardNumber}
                           </div>
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <h3 className="text-sm font-bold text-white">
+                              <h3 className="text-sm font-semibold text-[#1d1d1f]">
                                 {exec.fullName || 'Ward Executive'}
                               </h3>
-                              <span className="font-mono text-[11px] font-bold text-blue-300 bg-blue-950/80 border border-blue-800/60 px-2 py-0.5 rounded-md">
+                              <span className="font-mono text-[11px] font-bold text-[#0066cc] bg-[#eef5ff] border border-[#d6e6fb] px-2 py-0.5 rounded-md">
                                 {exec.executiveId || `WE-${exec.wardNumber}-1`}
                               </span>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#2e9d6a]" />
                                 Active
                               </span>
                             </div>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 mt-1.5">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#333333] mt-1.5">
                               <span className="flex items-center gap-1 font-mono">
-                                <Mail className="w-3 h-3 text-slate-500" />
+                                <Mail className="w-3 h-3 text-[#7a7a7a]" />
                                 {exec.email}
                               </span>
                               {exec.phone && (
                                 <span className="flex items-center gap-1">
-                                  <Phone className="w-3 h-3 text-slate-500" />
+                                  <Phone className="w-3 h-3 text-[#7a7a7a]" />
                                   {exec.phone}
                                 </span>
                               )}
-                              <span className="flex items-center gap-1 text-[11px] text-slate-500">
+                              <span className="flex items-center gap-1 text-[11px] text-[#7a7a7a]">
                                 <Clock className="w-3 h-3" />
                                 {exec.servicePeriod || '2081 - 2086 B.S.'}
                               </span>
@@ -1025,10 +1237,10 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                         </div>
 
                         <div className="sm:text-right flex-shrink-0 self-end sm:self-center">
-                          <span className="text-[11px] font-medium text-slate-400 block">
+                          <span className="text-[11px] font-medium text-[#7a7a7a] block">
                             Ward Jurisdiction
                           </span>
-                          <span className="text-xs font-bold text-white">
+                          <span className="text-xs font-semibold text-[#1d1d1f]">
                             Biratnagar Ward {exec.wardNumber}
                           </span>
                         </div>
@@ -1048,27 +1260,27 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // VIEW 3: WARD EXECUTIVE WORKSPACE
   // ==========================================
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#0066cc] selection:text-white flex flex-col font-sans">
       {/* Ward Executive Top Header */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200">
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-[#e0e0e0]">
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
               src="/Biratnagar%20City%20Gate%20Logo.png"
               alt="City Gate Logo"
-              className="h-10 w-auto object-contain drop-shadow"
+              className="h-10 w-auto object-contain"
             />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-black text-lg tracking-tight">
+                <span className="font-semibold text-lg tracking-tight">
                   <span className="text-[#DC143C]">Nagar</span>
                   <span className="text-[#156947]">योजना</span>
                 </span>
-                <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
                   Ward {userProfile?.wardNumber || '04'} Executive
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-[#7a7a7a]">
                 Biratnagar Metropolitan City · Executive Portal
               </p>
             </div>
@@ -1078,16 +1290,16 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             <button
               type="button"
               onClick={onReturnToPublic}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition-colors"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <ArrowLeft className="w-3.5 h-3.5 text-[#7a7a7a]" />
               <span>Public Portal</span>
             </button>
 
             <button
               type="button"
               onClick={handleSignOut}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-[#c4232d] bg-[#fff5f5] hover:bg-[#ffe9e9] border border-[#ffd6d6] transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out</span>
@@ -1099,31 +1311,31 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
       {/* Ward Executive Main Container */}
       <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
         {/* Profile & Executive Badge Banner */}
-        <section className="bg-gradient-to-r from-[#003893] to-[#0A4BB5] rounded-3xl p-6 sm:p-7 text-white shadow-xl relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 relative z-10">
-            <div className="flex items-center gap-2.5">
-              <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-white/20 text-white border border-white/30 backdrop-blur-sm">
+        <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 text-[#1d1d1f] flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-[#eef5ff] text-[#0066cc] border border-[#d6e6fb]">
                 ID: {userProfile?.executiveId || `WE-${userProfile?.wardNumber || 4}-1`}
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                <span className="w-2 h-2 rounded-full bg-[#2e9d6a]" />
                 Authorized Executive
               </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
               Ward {userProfile?.wardNumber || '04'} Executive Workspace
             </h1>
-            <p className="text-sm text-blue-100">
-              Executive: <strong>{userProfile?.displayName || userProfile?.fullName || 'Ward Executive'}</strong> · Official Contact: {currentUser.email}
+            <p className="text-sm text-[#7a7a7a]">
+              Executive: <strong className="text-[#1d1d1f]">{userProfile?.displayName || userProfile?.fullName || 'Ward Executive'}</strong> · Official Contact: {currentUser.email}
             </p>
           </div>
 
-          <div className="flex items-center gap-3 relative z-10">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onReturnToPublic}
-              className="sm:hidden inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white text-slate-900"
+              className="sm:hidden inline-flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-medium bg-white text-[#1d1d1f] border border-[#e0e0e0]"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Public Site</span>
@@ -1132,14 +1344,14 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         </section>
 
         {/* Tab Controls: Ward Projects vs Citizen Grievances */}
-        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2 border-b border-[#e0e0e0] pb-3">
           <button
             type="button"
             onClick={() => setActiveTab('projects')}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'projects'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
+                ? 'bg-[#0066cc] text-white'
+                : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
             }`}
           >
             <Building2 className="w-4 h-4" />
@@ -1149,10 +1361,10 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           <button
             type="button"
             onClick={() => setActiveTab('grievances')}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'grievances'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
+                ? 'bg-[#0066cc] text-white'
+                : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
             }`}
           >
             <FileText className="w-4 h-4" />
@@ -1165,19 +1377,19 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-slate-900">
+                <h2 className="text-base font-semibold text-[#1d1d1f]">
                   Infrastructure Projects in Ward {userProfile?.wardNumber || '04'}
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-[#7a7a7a]">
                   Update project completion milestones, physical progress, and status.
                 </p>
               </div>
             </div>
 
             {wardProjects.length === 0 ? (
-              <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
-                <Building2 className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-800">
+              <div className="p-8 text-center bg-white rounded-[18px] border border-[#e0e0e0]">
+                <Building2 className="w-8 h-8 text-[#7a7a7a] mx-auto mb-2" />
+                <p className="text-sm font-semibold text-[#1d1d1f]">
                   No projects currently listed for Ward {userProfile?.wardNumber || '04'}
                 </p>
               </div>
@@ -1186,43 +1398,43 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 {wardProjects.map((project) => (
                   <div
                     key={project.id}
-                    className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between space-y-4"
+                    className="bg-white rounded-[18px] p-5 border border-[#e0e0e0] flex flex-col justify-between space-y-4"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
                           {project.sector || 'Public Works'}
                         </span>
                         <span
-                          className={`text-xs font-bold px-2.5 py-0.5 rounded-full uppercase ${
+                          className={`text-xs font-semibold px-2.5 py-0.5 rounded-full uppercase border ${
                             project.status === 'COMPLETED'
-                              ? 'bg-emerald-100 text-emerald-800'
+                              ? 'bg-[#eefaf3] text-[#156947] border-[#cfeedd]'
                               : project.status === 'ACTIVE'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-amber-100 text-amber-800'
+                              ? 'bg-[#eef5ff] text-[#0066cc] border-[#d6e6fb]'
+                              : 'bg-[#fff8e6] text-[#8a5a00] border-[#fbe8b5]'
                           }`}
                         >
                           {project.status}
                         </span>
                       </div>
 
-                      <h3 className="text-base font-bold text-slate-900">
+                      <h3 className="text-base font-semibold text-[#1d1d1f]">
                         {project.title}
                       </h3>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-[#7a7a7a] mt-1">
                         {project.location} · Contractor: {project.contractor}
                       </p>
-                      <p className="text-xs text-slate-600 mt-2 line-clamp-2">
+                      <p className="text-xs text-[#333333] mt-2 line-clamp-2">
                         {project.description}
                       </p>
                     </div>
 
                     {/* Progress Slider & Status Editor */}
-                    <div className="pt-3 border-t border-slate-100 space-y-3">
+                    <div className="pt-3 border-t border-[#f0f0f0] space-y-3">
                       <div>
-                        <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
+                        <div className="flex items-center justify-between text-xs font-semibold text-[#333333] mb-1">
                           <span>Physical Progress</span>
-                          <span className="font-mono text-emerald-600 font-bold">
+                          <span className="font-mono text-[#156947] font-bold">
                             {project.progress}%
                           </span>
                         </div>
@@ -1239,7 +1451,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                               )
                             );
                           }}
-                          className="w-full accent-emerald-600 cursor-pointer"
+                          className="w-full accent-[#0066cc] cursor-pointer"
                         />
                       </div>
 
@@ -1254,7 +1466,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                               )
                             );
                           }}
-                          className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                          className="flex-1 bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-2.5 py-2 text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
                         >
                           <option value="ACTIVE">Status: ACTIVE</option>
                           <option value="DELAYED">Status: DELAYED</option>
@@ -1267,7 +1479,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                           onClick={() =>
                             handleUpdateProject(project.id, project.progress, project.status)
                           }
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors flex items-center gap-1 disabled:opacity-60 cursor-pointer"
+                          className="px-4 py-2 rounded-full text-xs font-medium text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors flex items-center gap-1 disabled:opacity-60 cursor-pointer"
                         >
                           {updatingProjectId === project.id ? (
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1279,7 +1491,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                       </div>
 
                       {projectUpdateFeedback[project.id] && (
-                        <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                        <p className="text-[11px] font-semibold text-[#156947] flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           {projectUpdateFeedback[project.id]}
                         </p>
@@ -1296,21 +1508,21 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         {activeTab === 'grievances' && (
           <section className="space-y-4">
             <div>
-              <h2 className="text-base font-bold text-slate-900">
+              <h2 className="text-base font-semibold text-[#1d1d1f]">
                 Citizen Grievance Queue · Ward {userProfile?.wardNumber || '04'}
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#7a7a7a]">
                 Issues reported by local residents requiring executive review or field inspection.
               </p>
             </div>
 
             {wardGrievances.length === 0 ? (
-              <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
-                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-800">
+              <div className="p-8 text-center bg-white rounded-[18px] border border-[#e0e0e0]">
+                <CheckCircle2 className="w-8 h-8 text-[#2e9d6a] mx-auto mb-2" />
+                <p className="text-sm font-semibold text-[#1d1d1f]">
                   No Pending Grievances
                 </p>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-[#7a7a7a] mt-1">
                   All citizen reports for Ward {userProfile?.wardNumber || '04'} are clear.
                 </p>
               </div>
@@ -1319,41 +1531,41 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 {wardGrievances.map((grv) => (
                   <div
                     key={grv.id}
-                    className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+                    className="bg-white rounded-[18px] p-5 border border-[#e0e0e0] flex flex-col md:flex-row md:items-center justify-between gap-4"
                   >
                     <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-slate-500">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-bold text-[#7a7a7a]">
                           {grv.id}
                         </span>
-                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6]">
                           {grv.issueType}
                         </span>
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-[#7a7a7a]">
                           · On: {grv.projectTitle}
                         </span>
                       </div>
-                      <p className="text-sm font-medium text-slate-800">
+                      <p className="text-sm font-medium text-[#1d1d1f]">
                         "{grv.description}"
                       </p>
-                      <p className="text-xs text-slate-500">
-                        Reported by: <strong>{grv.name}</strong> · Contact: {grv.phone} · Date: {new Date(grv.createdAt).toLocaleDateString()}
+                      <p className="text-xs text-[#7a7a7a]">
+                        Reported by: <strong className="text-[#333333]">{grv.name}</strong> · Contact: {grv.phone} · Date: {new Date(grv.createdAt).toLocaleDateString()}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-2 self-end md:self-center">
-                      <span className="text-xs font-semibold text-slate-600">
+                      <span className="text-xs font-semibold text-[#333333]">
                         Action:
                       </span>
                       <select
                         value={grv.status}
                         onChange={(e) => handleUpdateGrievanceStatus(grv.id, e.target.value)}
-                        className={`text-xs font-bold rounded-lg px-2.5 py-1.5 border focus:outline-none ${
+                        className={`text-xs font-semibold rounded-full px-3 py-1.5 border focus:outline-none focus:ring-2 focus:ring-[#0071e3] ${
                           grv.status === 'RESOLVED'
-                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            ? 'bg-[#eefaf3] text-[#156947] border-[#cfeedd]'
                             : grv.status === 'INVESTIGATING'
-                            ? 'bg-amber-50 text-amber-800 border-amber-300'
-                            : 'bg-red-50 text-red-800 border-red-300'
+                            ? 'bg-[#fff8e6] text-[#8a5a00] border-[#fbe8b5]'
+                            : 'bg-[#fff5f5] text-[#c4232d] border-[#ffd6d6]'
                         }`}
                       >
                         <option value="OPEN">Mark OPEN</option>

@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { X, Flag, CheckCircle2 } from 'lucide-react';
 import { PROJECT_TRANSLATIONS, toDevanagariNumerals } from '../translations';
 
+const FIELD_CLS =
+  'w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-[15px] text-[#1d1d1f] placeholder-[#7a7a7a] focus:outline-none focus:ring-2 focus:ring-[#0071e3] focus:border-[#0071e3] transition-shadow';
+const LABEL_CLS = 'block text-sm font-semibold text-[#1d1d1f] mb-1.5';
+
 export default function ReportIssueModal({ project, language, t, isOpen, onClose }) {
   const [submitted, setSubmitted] = useState(false);
   const [formData, setFormData] = useState({
@@ -69,45 +73,45 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
       aria-labelledby="report-modal-title"
     >
       <div
-        className="bg-white rounded-xl max-w-lg w-full p-6 sm:p-7 border border-gray-200 relative shadow-xl"
+        className="bg-white rounded-[18px] max-w-lg w-full p-6 sm:p-8 border border-[#e0e0e0] relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
           aria-label="Close dialog"
-          className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 transition-colors"
+          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-[#7a7a7a] hover:text-[#1d1d1f] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3]"
         >
-          <X className="w-5 h-5" />
+          <X className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-8 h-8 rounded-md bg-red-50 flex items-center justify-center text-[#DC143C]">
+        <div className="flex items-center gap-3 mb-2 pr-10">
+          <div className="w-9 h-9 rounded-full bg-[#f5f5f7] flex items-center justify-center text-[#DC143C]">
             <Flag className="w-4 h-4" />
           </div>
-          <h3 id="report-modal-title" className="text-lg font-bold text-gray-900">
+          <h3 id="report-modal-title" className="text-2xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">
             {t.grievanceTitle}
           </h3>
         </div>
 
-        <p className="text-xs text-gray-500 mb-4 pb-3 border-b border-gray-200">
-          {t.reportingOn} <strong className="text-gray-800 uppercase">{displayTitle}</strong> ({displayLocation}{displayWard ? ` · ${displayWard}` : ''})
+        <p className="text-sm text-[#7a7a7a] mb-5 pb-4 border-b border-[#e0e0e0]">
+          {t.reportingOn} <strong className="text-[#1d1d1f] font-semibold uppercase">{displayTitle}</strong> ({displayLocation}{displayWard ? ` · ${displayWard}` : ''})
         </p>
 
         {submitted ? (
-          <div className="py-8 text-center">
-            <div className="w-12 h-12 bg-green-50 text-[#2E8B57] rounded-full mx-auto flex items-center justify-center mb-3">
-              <CheckCircle2 className="w-6 h-6" />
+          <div className="py-10 text-center">
+            <div className="w-14 h-14 bg-[#f5f5f7] text-[#156947] rounded-full mx-auto flex items-center justify-center mb-4">
+              <CheckCircle2 className="w-7 h-7" />
             </div>
-            <p className="text-base font-bold text-gray-900">{t.grievanceSuccessTitle}</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-lg font-semibold tracking-[-0.02em] text-[#1d1d1f]">{t.grievanceSuccessTitle}</p>
+            <p className="text-sm text-[#7a7a7a] mt-1">
               {t.grievanceSuccessMsg(displayWard)}
             </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
+              <label className={LABEL_CLS}>
                 {t.fullName}
               </label>
               <input
@@ -116,12 +120,12 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder={isNe ? 'उदा: सन्तोष कार्की' : 'e.g. Santosh Karki'}
-                className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
+                className={FIELD_CLS}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
+              <label className={LABEL_CLS}>
                 {t.mobileNumber}
               </label>
               <input
@@ -130,18 +134,18 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 placeholder={isNe ? '९८XXXXXXXX' : '98XXXXXXXX'}
-                className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
+                className={FIELD_CLS}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
+              <label className={LABEL_CLS}>
                 {t.issueCategory}
               </label>
               <select
                 value={formData.issueType}
                 onChange={(e) => setFormData({ ...formData, issueType: e.target.value })}
-                className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
+                className={FIELD_CLS}
               >
                 <option value="Quality of Materials">{t.issueQuality}</option>
                 <option value="Construction Delay">{t.issueDelay}</option>
@@ -151,7 +155,7 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
+              <label className={LABEL_CLS}>
                 {t.issueDescription}
               </label>
               <textarea
@@ -160,21 +164,21 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder={t.issuePlaceholder}
-                className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
+                className={FIELD_CLS}
               />
             </div>
 
-            <div className="pt-2 flex justify-end gap-3">
+            <div className="pt-3 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                className="px-5 py-2.5 text-sm text-[#0066cc] border border-[#0066cc] rounded-full hover:bg-[#0066cc]/5 transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3]"
               >
                 {t.cancelBtn}
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-[#0284C7] hover:bg-[#0369A1] rounded-lg transition-colors shadow-sm"
+                className="px-5 py-2.5 text-sm text-white bg-[#0066cc] hover:bg-[#0071e3] rounded-full transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2"
               >
                 {t.submitGrievanceBtn}
               </button>

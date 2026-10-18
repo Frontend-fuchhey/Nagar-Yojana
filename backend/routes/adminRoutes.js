@@ -221,4 +221,47 @@ router.get("/next-id/:wardNumber", verifyToken, requireWardExec, async (req, res
   }
 });
 
+/**
+ * GET /api/admin/lockouts
+ * Super Admin only: lists accounts that are currently locked out (24h lockout).
+ */
+router.get("/lockouts", verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const now = Date.now();
+    const snap = await adminDb.collection("loginLockouts").where("lockedUntil", ">", admin.firestore.Timestamp.fromMillis(now)).get();
+    const lockouts = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        email: data.email || d.id,
+        failedAttempts: data.failedAttempts || 0,
+        lockedUntil: data.lockedUntil ? data.lockedUntil.toMillis() : null,
+        lastFailedAt: data.lastFailedAt ? data.lastFailedAt.toMillis() : null,
+      };
+    });
+    lockouts.sort((a, b) => (b.lastFailedAt || 0) - (a.lastFailedAt || 0));
+    return res.json({ lockouts });
+  } catch (error) {
+    console.error("[AdminRoutes] Error listing lockouts:", error);
+    return res.status(500).json({ error: "Failed to list locked accounts." });
+  }
+});
+
+/**
+ * POST /api/admin/lockouts/unlock  { email }
+ * Super Admin only: removes the lockout record so the account can sign in again.
+ */
+router.post("/lockouts/unlock", verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!email || email.includes("/")) {
+      return res.status(400).json({ error: "A valid email is required." });
+    }
+    await adminDb.collection("loginLockouts").doc(email).delete();
+    return res.json({ unlocked: true, email });
+  } catch (error) {
+    console.error("[AdminRoutes] Error unlocking account:", error);
+    return res.status(500).json({ error: "Failed to unlock account." });
+  }
+});
+
 module.exports = router;

@@ -2,6 +2,9 @@ import React from 'react';
 import { Layers, Search } from 'lucide-react';
 import { getWardOptions, toDevanagariNumerals } from '../translations';
 
+const INPUT_CLS =
+  'bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] text-sm text-[#1d1d1f] placeholder:text-[#7a7a7a] focus:outline-none focus:ring-2 focus:ring-[#0071e3] focus:border-[#0071e3] transition-shadow';
+
 export default function WardFilters({
   language,
   t,
@@ -34,34 +37,36 @@ export default function WardFilters({
   const wardOptions = getWardOptions(language);
 
   return (
-    <div className="pt-0.5 pb-2">
-      {/* Top Header inside Card: Layer Icon + Title + Plain Blue Count Text + Status Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-        {/* Left: Icon, Title & Plain Blue Count Text (NO background pill) */}
-        <div className="flex items-start sm:items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-[#E8F5E9] text-[#2E7D32] flex items-center justify-center flex-shrink-0 shadow-sm mt-0.5 sm:mt-0">
-            <Layers className="w-4 h-4 text-[#2E7D32]" />
+    <div>
+      {/* Section header + status tabs */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-5">
+        <div className="flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-full bg-white border border-[#e0e0e0] text-[#156947] flex items-center justify-center flex-shrink-0 mt-1">
+            <Layers className="w-4 h-4" />
           </div>
           <div>
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <h2 className="text-lg sm:text-xl font-bold tracking-tight text-[#1A2530]">
+            <div className="flex items-baseline gap-3 flex-wrap">
+              <h2 className="text-2xl sm:text-[34px] font-semibold tracking-[-0.03em] leading-[1.1] text-[#1d1d1f]">
                 {t.cardTitle}
               </h2>
-              {/* Plain Blue Text - NO rounded pill */}
-              <span className="text-xs sm:text-sm font-semibold text-[#0284C7] ml-1 select-none">
+              <span className="text-sm font-normal text-[#0066cc] select-none">
                 {isNe
                   ? `${toDevanagariNumerals(projectsCount)} ${t.projectsFound}`
                   : `${projectsCount} ${t.projectsFound}`}
               </span>
             </div>
-            <p className="text-[11px] sm:text-xs text-[#64748B] mt-0.5">
+            <p className="text-sm sm:text-base text-[#7a7a7a] mt-1.5">
               {t.cardSubtitle}
             </p>
           </div>
         </div>
 
-        {/* Right: Status Tabs */}
-        <div className="flex items-center gap-4 sm:gap-5 text-xs sm:text-sm" role="tablist" aria-label="Project Status Filter">
+        {/* Status segmented pills */}
+        <div
+          className="inline-flex items-center gap-1 p-1 bg-white border border-[#e0e0e0] rounded-full self-start md:self-auto overflow-x-auto max-w-full"
+          role="tablist"
+          aria-label="Project Status Filter"
+        >
           {statusOptions.map((status) => {
             const isSelected = activeStatus.toLowerCase() === status.key.toLowerCase();
             return (
@@ -71,10 +76,10 @@ export default function WardFilters({
                 role="tab"
                 aria-selected={isSelected}
                 onClick={() => onStatusChange(status.key)}
-                className={`transition-all pb-1 focus:outline-none text-xs sm:text-sm ${
+                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] ${
                   isSelected
-                    ? 'text-[#156947] font-bold border-b-2 border-[#156947]'
-                    : 'text-[#64748B] hover:text-[#1A2530] font-medium border-b-2 border-transparent'
+                    ? 'bg-[#1d1d1f] text-white font-semibold'
+                    : 'text-[#7a7a7a] hover:text-[#1d1d1f] font-normal'
                 }`}
               >
                 {status.label}
@@ -84,32 +89,32 @@ export default function WardFilters({
         </div>
       </div>
 
-      {/* Row 2: Clean Rounded Filter Bar (Search | Ward | Sector) */}
-      <div className="mt-4 p-2 sm:p-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl flex flex-col xl:flex-row xl:items-center gap-3 text-xs sm:text-sm shadow-none">
-        {/* Search Input Box */}
+      {/* Filter bar */}
+      <div className="mt-8 p-3 sm:p-4 bg-white border border-[#e0e0e0] rounded-[18px] flex flex-col xl:flex-row xl:items-center gap-4 text-sm">
+        {/* Search */}
         <div className="relative w-full xl:flex-1 xl:min-w-[200px]">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Search className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder={t.searchPlaceholder}
-            className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300 truncate"
+            className={`w-full pl-10 pr-4 py-2.5 truncate ${INPUT_CLS}`}
           />
         </div>
 
-        <div className="hidden xl:block h-5 w-px bg-slate-200" />
+        <div className="hidden xl:block h-6 w-px bg-[#e0e0e0]" />
 
         {/* Ward Selector */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <label htmlFor="ward-select" className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+        <div className="flex items-center gap-2.5 flex-shrink-0">
+          <label htmlFor="ward-select" className="text-sm font-semibold text-[#1d1d1f] whitespace-nowrap">
             {t.wardLabel}
           </label>
           <select
             id="ward-select"
             value={activeWard}
             onChange={(e) => onWardChange(e.target.value)}
-            className="bg-white border border-slate-200 text-slate-700 text-xs sm:text-sm font-medium rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-400 transition-colors shadow-sm cursor-pointer max-w-[210px]"
+            className={`px-3 py-2.5 cursor-pointer max-w-[210px] ${INPUT_CLS}`}
           >
             {wardOptions.map((w) => (
               <option key={w.value} value={w.value}>
@@ -119,37 +124,32 @@ export default function WardFilters({
           </select>
         </div>
 
-        <div className="hidden xl:block h-5 w-px bg-slate-200" />
+        <div className="hidden xl:block h-6 w-px bg-[#e0e0e0]" />
 
-        {/* Sector Tabs */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 xl:flex-shrink-0" role="tablist" aria-label="Sector Filter">
-          <span className="text-xs font-semibold text-slate-600 mr-0.5">{t.sectorLabel}</span>
-          {sectorOptions.map((sector, index) => {
+        {/* Sector chips */}
+        <div className="flex flex-wrap items-center gap-2 xl:flex-shrink-0" role="tablist" aria-label="Sector Filter">
+          <span className="text-sm font-semibold text-[#1d1d1f] mr-1">{t.sectorLabel}</span>
+          {sectorOptions.map((sector) => {
             const isSelected = activeSector.toLowerCase() === sector.key.toLowerCase();
             return (
-              <React.Fragment key={sector.key}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={isSelected}
-                  onClick={() => onSectorChange(sector.key)}
-                  className={`transition-colors py-0.5 focus:outline-none text-xs sm:text-sm whitespace-nowrap ${
-                    isSelected
-                      ? 'text-[#1A2530] font-bold'
-                      : 'text-[#64748B] hover:text-[#1A2530] font-normal'
-                  }`}
-                >
-                  {sector.label}
-                </button>
-                {index < sectorOptions.length - 1 && (
-                  <span className="text-slate-300 select-none font-light">|</span>
-                )}
-              </React.Fragment>
+              <button
+                key={sector.key}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                onClick={() => onSectorChange(sector.key)}
+                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap border focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] ${
+                  isSelected
+                    ? 'border-[#0066cc] text-[#0066cc] font-semibold bg-[#0066cc]/5'
+                    : 'border-[#e0e0e0] text-[#7a7a7a] hover:text-[#1d1d1f] hover:border-[#7a7a7a] font-normal bg-white'
+                }`}
+              >
+                {sector.label}
+              </button>
             );
           })}
         </div>
       </div>
-
     </div>
   );
 }
