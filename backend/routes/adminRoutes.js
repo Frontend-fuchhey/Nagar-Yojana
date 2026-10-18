@@ -145,8 +145,9 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
     let emailDispatched = true;
     try {
       await sendWardExecCredentials({
-        email: cleanEmail,
+        name: cleanFullName,
         fullName: cleanFullName,
+        email: cleanEmail,
         wardNumber: ward,
         servicePeriod: cleanServicePeriod,
         executiveId,
@@ -398,8 +399,9 @@ router.post("/ward-exec/:uid/resend", verifyToken, requireSuperAdmin, async (req
     let emailSent = true;
     try {
       await sendWardExecCredentials({
-        email: data.email,
+        name: data.fullName,
         fullName: data.fullName,
+        email: data.email,
         wardNumber: data.wardNumber,
         servicePeriod: data.servicePeriod,
         executiveId: data.executiveId,
