@@ -6,8 +6,6 @@ export default function ProjectList({
   projects,
   loading,
   error,
-  language,
-  t,
   onRetry,
   onReportIssue,
 }) {
@@ -91,7 +89,7 @@ export default function ProjectList({
           <AlertCircle className="w-6 h-6" />
         </div>
         <p className="text-[#1d1d1f] font-semibold text-lg tracking-[-0.02em] mb-1">
-          {t.unableToLoad}
+          Unable to load infrastructure projects
         </p>
         <p className="text-[#7a7a7a] text-sm max-w-md mx-auto mb-5">
           {error}
@@ -99,10 +97,10 @@ export default function ProjectList({
         <button
           type="button"
           onClick={onRetry}
-          className="inline-flex items-center gap-2 px-5 py-2.5 border border-[#0066cc] rounded-full text-sm text-[#0066cc] bg-transparent hover:bg-[#0066cc]/5 transition-colors active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3]"
+          className="inline-flex items-center gap-2 px-5 py-2.5 border border-[#0066cc] rounded-full text-sm text-[#0066cc] bg-transparent hover:bg-[#0066cc]/5 transition-colors active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] cursor-pointer"
         >
           <RefreshCw className="w-4 h-4" />
-          <span>{t.retryLoading}</span>
+          <span>Retry Loading</span>
         </button>
       </div>
     );
@@ -112,10 +110,10 @@ export default function ProjectList({
     return (
       <div className="py-20 text-center bg-white rounded-[18px] border border-[#e0e0e0]">
         <p className="text-[#1d1d1f] font-semibold text-xl tracking-[-0.02em]">
-          {t.noProjectsFound}
+          No projects found matching the selected filters.
         </p>
         <p className="text-[#7a7a7a] text-sm mt-1">
-          {t.noProjectsSub}
+          Try selecting another sector or clearing your search term.
         </p>
       </div>
     );
@@ -127,8 +125,6 @@ export default function ProjectList({
         <ProjectCard
           key={project.id}
           project={project}
-          language={language}
-          t={t}
           onReportIssue={onReportIssue}
         />
       ))}

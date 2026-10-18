@@ -1,8 +1,7 @@
-﻿import React from 'react';
+import React from 'react';
 import { MapPin, User, Coins, Calendar, Flag, Star } from 'lucide-react';
-import { PROJECT_TRANSLATIONS, toDevanagariNumerals } from '../translations';
 
-export default function ProjectCard({ project, language, t, onReportIssue }) {
+export default function ProjectCard({ project, onReportIssue }) {
   const {
     id,
     title,
@@ -19,28 +18,18 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
     dateLabel,
   } = project;
 
-  const isNe = language === 'ne';
-  const trans = isNe && PROJECT_TRANSLATIONS[id] ? PROJECT_TRANSLATIONS[id] : null;
-
-  const displayTitle = trans?.title || project.titleEn || title;
-  const displayLocation = trans?.location || location;
-  const displayContractor = trans?.contractor || contractor;
+  const displayTitle = title;
+  const displayLocation = location;
+  const displayContractor = contractor;
   const displayDescription =
-    (isNe && project.descriptionNe) ||
-    trans?.description ||
-    description ||
-    'Civic infrastructure development initiative for community enhancement.';
-  const displayWard =
-    trans?.ward ||
-    (isNe && ward
-      ? ward.replace('Ward', 'à¤µà¤¡à¤¾').replace(/(\d+)/, (m) => toDevanagariNumerals(m))
-      : ward);
-  const displayBudget = isNe ? toDevanagariNumerals(budget) : budget;
+    description || 'Civic infrastructure development initiative for community enhancement.';
+  const displayWard = ward;
+  const displayBudget = budget;
   const clampedProgress = Math.min(Math.max(Number(progress) || 0, 0), 100);
-  const displayProgress = isNe ? toDevanagariNumerals(clampedProgress) : clampedProgress;
+  const displayProgress = clampedProgress;
 
-  const displayDateLabel = isNe ? (project.dateLabelNe || trans?.dateLabel || 'à¤®à¤¿à¤¤à¤¿') : (dateLabel || (status === 'COMPLETED' ? 'Completed On' : 'Started'));
-  const displayDate = isNe && date ? toDevanagariNumerals(date) : (date || '2081-11-15 (B.S.)');
+  const displayDateLabel = dateLabel || (status === 'COMPLETED' ? 'Completed On' : 'Started');
+  const displayDate = date || '2081-11-15 (B.S.)';
 
   const statusUpper = status?.toUpperCase() || 'ACTIVE';
 
@@ -50,19 +39,19 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
         return {
           textClass: 'text-[#10B981]',
           barColor: '#10B981',
-          label: isNe ? 'à¤¸à¤•à¥à¤°à¤¿à¤¯' : 'Active',
+          label: 'Active',
         };
       case 'DELAYED':
         return {
           textClass: 'text-[#F59E0B]',
           barColor: '#F59E0B',
-          label: isNe ? 'à¤¢à¤¿à¤²à¤¾à¤‡' : 'Delayed',
+          label: 'Delayed',
         };
       case 'COMPLETED':
         return {
           textClass: 'text-[#0284C7]',
           barColor: '#0284C7',
-          label: isNe ? 'à¤¸à¤®à¥à¤ªà¤¨à¥à¤¨' : 'Completed',
+          label: 'Completed',
         };
       default:
         return {
@@ -94,7 +83,7 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
           {featured && (
             <div className="absolute top-3 left-3 bg-white/80 backdrop-blur-md text-[#1d1d1f] text-[11px] font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1">
               <Star className="w-3 h-3 fill-current text-amber-500" />
-              <span>{t.featuredBadge}</span>
+              <span>Featured</span>
             </div>
           )}
         </div>
@@ -135,7 +124,7 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
               </div>
               <div>
                 <span className="text-[11px] text-[#7a7a7a] block uppercase tracking-wider">
-                  {t.budgetPrefix}
+                  Budget:
                 </span>
                 <span className="text-sm font-semibold text-[#1d1d1f]">
                   Rs. {displayBudget}
@@ -145,7 +134,7 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
 
             <div className="w-36 sm:w-48 lg:w-52">
               <div className="flex justify-between items-center text-xs text-[#7a7a7a] mb-1.5">
-                <span>{t.progressLabel}</span>
+                <span>Progress</span>
                 <span className="font-semibold text-[#1d1d1f]">{displayProgress}%</span>
               </div>
               <div className="w-full bg-[#f5f5f7] h-1.5 rounded-full overflow-hidden">
@@ -184,11 +173,11 @@ export default function ProjectCard({ project, language, t, onReportIssue }) {
           <div>
             <button
               type="button"
-              onClick={() => onReportIssue(project)}
-              className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 bg-[#0066cc] hover:bg-[#0071e3] text-white text-sm rounded-full transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2"
+              onClick={() => onReportIssue && onReportIssue(project)}
+              className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 bg-[#0066cc] hover:bg-[#0071e3] text-white text-sm rounded-full transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2 cursor-pointer"
             >
               <Flag className="w-3.5 h-3.5" />
-              <span>{t.reportIssueBtn}</span>
+              <span>Report Issue</span>
             </button>
           </div>
         </div>

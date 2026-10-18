@@ -1,13 +1,35 @@
 import React from 'react';
 import { Layers, Search } from 'lucide-react';
-import { getWardOptions, toDevanagariNumerals } from '../translations';
 
 const INPUT_CLS =
   'bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] text-sm text-[#1d1d1f] placeholder:text-[#7a7a7a] focus:outline-none focus:ring-2 focus:ring-[#0071e3] focus:border-[#0071e3] transition-shadow';
 
+const statusOptions = [
+  { key: 'All', label: 'All' },
+  { key: 'Active', label: 'Active' },
+  { key: 'Delayed', label: 'Delayed' },
+  { key: 'Completed', label: 'Completed' },
+];
+
+const sectorOptions = [
+  { key: 'All', label: 'All' },
+  { key: 'Roads & Drainage', label: 'Roads & Drainage' },
+  { key: 'Water & Sanitation', label: 'Water & Sanitation' },
+  { key: 'Public Facilities', label: 'Public Facilities' },
+];
+
+const wardOptions = [
+  { value: 'All', label: 'All Wards (Biratnagar)' },
+  ...Array.from({ length: 19 }, (_, i) => {
+    const pad = i + 1 < 10 ? `0${i + 1}` : `${i + 1}`;
+    return {
+      value: `Ward ${pad}`,
+      label: `Ward ${pad} — Biratnagar`,
+    };
+  }),
+];
+
 export default function WardFilters({
-  language,
-  t,
   projectsCount = 3,
   activeWard = 'All',
   onWardChange,
@@ -18,24 +40,6 @@ export default function WardFilters({
   searchQuery,
   onSearchChange,
 }) {
-  const isNe = language === 'ne';
-
-  const statusOptions = [
-    { key: 'All', label: t.statusAll },
-    { key: 'Active', label: t.statusActive },
-    { key: 'Delayed', label: t.statusDelayed },
-    { key: 'Completed', label: t.statusCompleted },
-  ];
-
-  const sectorOptions = [
-    { key: 'All', label: t.sectorAll },
-    { key: 'Roads & Drainage', label: t.sectorRoads },
-    { key: 'Water & Sanitation', label: t.sectorWater },
-    { key: 'Public Facilities', label: t.sectorPublic },
-  ];
-
-  const wardOptions = getWardOptions(language);
-
   return (
     <div>
       {/* Section header + status tabs */}
@@ -47,16 +51,14 @@ export default function WardFilters({
           <div>
             <div className="flex items-baseline gap-3 flex-wrap">
               <h2 className="text-2xl sm:text-[34px] font-semibold tracking-[-0.03em] leading-[1.1] text-[#1d1d1f]">
-                {t.cardTitle}
+                Infrastructure Projects
               </h2>
               <span className="text-sm font-normal text-[#0066cc] select-none">
-                {isNe
-                  ? `${toDevanagariNumerals(projectsCount)} ${t.projectsFound}`
-                  : `${projectsCount} ${t.projectsFound}`}
+                {projectsCount} Projects Found
               </span>
             </div>
             <p className="text-sm sm:text-base text-[#7a7a7a] mt-1.5">
-              {t.cardSubtitle}
+              Explore and participate in ongoing infrastructure projects of Biratnagar Metropolitan City.
             </p>
           </div>
         </div>
@@ -76,7 +78,7 @@ export default function WardFilters({
                 role="tab"
                 aria-selected={isSelected}
                 onClick={() => onStatusChange(status.key)}
-                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] ${
+                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] cursor-pointer ${
                   isSelected
                     ? 'bg-[#1d1d1f] text-white font-semibold'
                     : 'text-[#7a7a7a] hover:text-[#1d1d1f] font-normal'
@@ -98,7 +100,7 @@ export default function WardFilters({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={t.searchPlaceholder}
+            placeholder="Search projects, locations, contractors..."
             className={`w-full pl-10 pr-4 py-2.5 truncate ${INPUT_CLS}`}
           />
         </div>
@@ -108,7 +110,7 @@ export default function WardFilters({
         {/* Ward Selector */}
         <div className="flex items-center gap-2.5 flex-shrink-0">
           <label htmlFor="ward-select" className="text-sm font-semibold text-[#1d1d1f] whitespace-nowrap">
-            {t.wardLabel}
+            Ward:
           </label>
           <select
             id="ward-select"
@@ -128,7 +130,7 @@ export default function WardFilters({
 
         {/* Sector chips */}
         <div className="flex flex-wrap items-center gap-2 xl:flex-shrink-0" role="tablist" aria-label="Sector Filter">
-          <span className="text-sm font-semibold text-[#1d1d1f] mr-1">{t.sectorLabel}</span>
+          <span className="text-sm font-semibold text-[#1d1d1f] mr-1">Sector:</span>
           {sectorOptions.map((sector) => {
             const isSelected = activeSector.toLowerCase() === sector.key.toLowerCase();
             return (
@@ -138,7 +140,7 @@ export default function WardFilters({
                 role="tab"
                 aria-selected={isSelected}
                 onClick={() => onSectorChange(sector.key)}
-                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap border focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] ${
+                className={`transition-colors px-3.5 py-1.5 rounded-full text-sm whitespace-nowrap border focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] cursor-pointer ${
                   isSelected
                     ? 'border-[#0066cc] text-[#0066cc] font-semibold bg-[#0066cc]/5'
                     : 'border-[#e0e0e0] text-[#7a7a7a] hover:text-[#1d1d1f] hover:border-[#7a7a7a] font-normal bg-white'

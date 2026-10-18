@@ -1,8 +1,6 @@
-﻿import React from 'react';
+import React from 'react';
 
-export default function Hero({ language, t }) {
-  const isNe = language === 'ne';
-
+export default function Hero() {
   return (
     <section className="relative w-full overflow-hidden bg-[#F8FAFC] h-[250px] sm:h-[290px] lg:h-[330px]">
       {/* Background photo: tower & skyline kept on the right side */}
@@ -46,7 +44,7 @@ export default function Hero({ language, t }) {
 
       {/* Nepali motto: live handwritten text with green swoosh */}
       <div
-        className="hidden sm:block absolute top-6 lg:top-9 right-[6%] lg:right-[9%] z-10 text-center select-none pointer-events-none"
+        className="hidden sm:block absolute top-6 lg:top-9 right-[6%] lg:right-[9%] z-10 text-center select-none pointer-events-none notranslate"
         style={{ transform: 'rotate(-4deg)' }}
       >
         <p
@@ -56,8 +54,8 @@ export default function Hero({ language, t }) {
             textShadow: '0 1px 2px rgba(255,255,255,0.9), 0 0 6px rgba(255,255,255,0.7)',
           }}
         >
-          <span className="block">{t.heroMottoLine1}</span>
-          <span className="block">{t.heroMottoLine2}</span>
+          <span className="block">समृद्ध विराटनगर</span>
+          <span className="block">हाम्रो साझा जिम्मेवारी</span>
         </p>
         <svg viewBox="0 0 200 20" className="mx-auto mt-0.5 w-32 lg:w-44 h-4" aria-hidden="true">
           <path d="M4 14 C 50 2 120 2 196 8" fill="none" stroke="#156947" strokeWidth="3" strokeLinecap="round" />
@@ -69,20 +67,20 @@ export default function Hero({ language, t }) {
         <div className="max-w-md sm:max-w-lg lg:max-w-xl">
           {/* Eyebrow Label */}
           <p className="text-[11px] sm:text-xs font-bold tracking-wider text-[#4A6572] uppercase">
-            {isNe ? t.heroEyebrow : 'BIRATNAGAR METROPOLITAN CITY'}
+            BIRATNAGAR METROPOLITAN CITY
           </p>
 
           <h1 className="mt-1 text-3xl sm:text-4xl lg:text-[44px] font-extrabold tracking-tight leading-[1.08]">
             <span className="text-[#111827] block">
-              {isNe ? t.heroLine1 : 'Hamro Nagar,'}
+              Hamro Nagar,
             </span>
             <span className="text-[#156947] block mt-0.5">
-              {isNe ? t.heroLine2 : 'Aafno Sarkar'}
+              Aafno Sarkar
             </span>
           </h1>
 
           <p className="mt-2 text-xs sm:text-sm text-[#556987] font-medium leading-relaxed">
-            {isNe ? t.heroSubtitle : 'Transparent. Accountable. For a Better Tomorrow.'}
+            Transparent. Accountable. For a Better Tomorrow.
           </p>
         </div>
       </div>

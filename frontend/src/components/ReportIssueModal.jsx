@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X, Flag, CheckCircle2 } from 'lucide-react';
-import { PROJECT_TRANSLATIONS, toDevanagariNumerals } from '../translations';
 
 const FIELD_CLS =
   'w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-[15px] text-[#1d1d1f] placeholder-[#7a7a7a] focus:outline-none focus:ring-2 focus:ring-[#0071e3] focus:border-[#0071e3] transition-shadow';
 const LABEL_CLS = 'block text-sm font-semibold text-[#1d1d1f] mb-1.5';
 
-export default function ReportIssueModal({ project, language, t, isOpen, onClose }) {
+export default function ReportIssueModal({ project, isOpen, onClose }) {
   const [submitted, setSubmitted] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -27,11 +26,9 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
 
   if (!isOpen || !project) return null;
 
-  const isNe = language === 'ne';
-  const trans = isNe && PROJECT_TRANSLATIONS[project.id] ? PROJECT_TRANSLATIONS[project.id] : null;
-  const displayTitle = trans?.title || project.title;
-  const displayLocation = trans?.location || project.location;
-  const displayWard = trans?.ward || (isNe && project.ward ? project.ward.replace('Ward', 'वडा').replace(/(\d+)/, (m) => toDevanagariNumerals(m)) : project.ward);
+  const displayTitle = project.title;
+  const displayLocation = project.location;
+  const displayWard = project.ward;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -80,7 +77,7 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
           type="button"
           onClick={onClose}
           aria-label="Close dialog"
-          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-[#7a7a7a] hover:text-[#1d1d1f] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3]"
+          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-[#7a7a7a] hover:text-[#1d1d1f] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -90,12 +87,12 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
             <Flag className="w-4 h-4" />
           </div>
           <h3 id="report-modal-title" className="text-2xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">
-            {t.grievanceTitle}
+            Citizen Grievance & Issue Report
           </h3>
         </div>
 
         <p className="text-sm text-[#7a7a7a] mb-5 pb-4 border-b border-[#e0e0e0]">
-          {t.reportingOn} <strong className="text-[#1d1d1f] font-semibold uppercase">{displayTitle}</strong> ({displayLocation}{displayWard ? ` · ${displayWard}` : ''})
+          Reporting on: <strong className="text-[#1d1d1f] font-semibold uppercase">{displayTitle}</strong> ({displayLocation}{displayWard ? ` · ${displayWard}` : ''})
         </p>
 
         {submitted ? (
@@ -103,67 +100,67 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
             <div className="w-14 h-14 bg-[#f5f5f7] text-[#156947] rounded-full mx-auto flex items-center justify-center mb-4">
               <CheckCircle2 className="w-7 h-7" />
             </div>
-            <p className="text-lg font-semibold tracking-[-0.02em] text-[#1d1d1f]">{t.grievanceSuccessTitle}</p>
+            <p className="text-lg font-semibold tracking-[-0.02em] text-[#1d1d1f]">Grievance Registered Successfully</p>
             <p className="text-sm text-[#7a7a7a] mt-1">
-              {t.grievanceSuccessMsg(displayWard)}
+              Your report has been logged and routed to the {displayWard || 'Municipal'} Public Oversight Committee, Biratnagar Metropolitan City.
             </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className={LABEL_CLS}>
-                {t.fullName}
+                Your Full Name
               </label>
               <input
                 type="text"
                 required
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder={isNe ? 'उदा: सन्तोष कार्की' : 'e.g. Santosh Karki'}
+                placeholder="e.g. Santosh Karki"
                 className={FIELD_CLS}
               />
             </div>
 
             <div>
               <label className={LABEL_CLS}>
-                {t.mobileNumber}
+                Mobile Number
               </label>
               <input
                 type="tel"
                 required
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder={isNe ? '९८XXXXXXXX' : '98XXXXXXXX'}
+                placeholder="98XXXXXXXX"
                 className={FIELD_CLS}
               />
             </div>
 
             <div>
               <label className={LABEL_CLS}>
-                {t.issueCategory}
+                Issue Category
               </label>
               <select
                 value={formData.issueType}
                 onChange={(e) => setFormData({ ...formData, issueType: e.target.value })}
                 className={FIELD_CLS}
               >
-                <option value="Quality of Materials">{t.issueQuality}</option>
-                <option value="Construction Delay">{t.issueDelay}</option>
-                <option value="Public Safety Hazard">{t.issueSafety}</option>
-                <option value="Budget Mismanagement">{t.issueBudget}</option>
+                <option value="Quality of Materials">Quality of Materials / Substandard Work</option>
+                <option value="Construction Delay">Unreasonable Construction Delay</option>
+                <option value="Public Safety Hazard">Public Safety / Road Obstruction Hazard</option>
+                <option value="Budget Mismanagement">Budget Transparency Discrepancy</option>
               </select>
             </div>
 
             <div>
               <label className={LABEL_CLS}>
-                {t.issueDescription}
+                Description of Grievance
               </label>
               <textarea
                 rows={3}
                 required
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder={t.issuePlaceholder}
+                placeholder="Describe observations, location landmark, or issues encountered..."
                 className={FIELD_CLS}
               />
             </div>
@@ -172,15 +169,15 @@ export default function ReportIssueModal({ project, language, t, isOpen, onClose
               <button
                 type="button"
                 onClick={onClose}
-                className="px-5 py-2.5 text-sm text-[#0066cc] border border-[#0066cc] rounded-full hover:bg-[#0066cc]/5 transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3]"
+                className="px-5 py-2.5 text-sm text-[#0066cc] border border-[#0066cc] rounded-full hover:bg-[#0066cc]/5 transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] cursor-pointer"
               >
-                {t.cancelBtn}
+                Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 text-sm text-white bg-[#0066cc] hover:bg-[#0071e3] rounded-full transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2"
+                className="px-5 py-2.5 text-sm text-white bg-[#0066cc] hover:bg-[#0071e3] rounded-full transition-all active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2 cursor-pointer"
               >
-                {t.submitGrievanceBtn}
+                Submit Grievance
               </button>
             </div>
           </form>
