@@ -53,7 +53,10 @@ async function sendWardExecCredentials({
     auth: {
       user: smtpUser,
       pass: smtpPass
-    }
+    },
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 5000,    // 5 seconds
+    socketTimeout: 15000      // 15 seconds
   });
 
   const htmlContent = `

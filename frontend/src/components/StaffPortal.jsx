@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   signInWithEmailAndPassword,
   signOut,
@@ -34,6 +34,7 @@ import {
   Check,
   Clock,
   Sparkles,
+  ChevronLeft,
   ChevronRight,
   Send,
 } from 'lucide-react';
@@ -56,7 +57,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [formPhone, setFormPhone] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formWard, setFormWard] = useState('4');
-  const [formTenure, setFormTenure] = useState('2081 - 2086 B.S.');
+  const [formTenure, setFormTenure] = useState('');
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const calendarRef = useRef(null);
+  const nativeDateRef = useRef(null);
   const [provisionLoading, setProvisionLoading] = useState(false);
   const [provisionSuccess, setProvisionSuccess] = useState(null);
   const [provisionError, setProvisionError] = useState(null);
@@ -68,6 +73,9 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [adminTaskTab, setAdminTaskTab] = useState('all'); // 'all' | 'executives' | 'lockouts'
   const [showProvisionForm, setShowProvisionForm] = useState(true);
+  const [revokingUid, setRevokingUid] = useState(null);
+  const [resendingUid, setResendingUid] = useState(null);
+  const [actionFeedback, setActionFeedback] = useState(null);
 
   // Ward Executive: Projects & Grievances State
   const [wardProjects, setWardProjects] = useState([]);
@@ -150,6 +158,20 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
       console.warn('API ward-execs fetch fallback:', err.message);
     }
   };
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (calendarRef.current && !calendarRef.current.contains(event.target)) {
+        setCalendarOpen(false);
+      }
+    }
+    if (calendarOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [calendarOpen]);
 
   useEffect(() => {
     if (userRole !== 'SUPER_ADMIN' || !currentUser) return;
@@ -442,6 +464,89 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     }
   };
 
+  // Handler: Revoke Ward Executive Access and Delete User
+  const handleRevokeExecutive = async (exec) => {
+    if (!exec || !exec.uid) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to revoke access and remove ${exec.fullName || 'this executive'} from Ward ${exec.wardNumber}? Their login credentials will be permanently deleted.`
+    );
+    if (!confirmed) return;
+
+    setRevokingUid(exec.uid);
+    setActionFeedback(null);
+    try {
+      const token = currentUser ? await currentUser.getIdToken() : '';
+      const res = await fetch(`/api/admin/ward-exec/${exec.uid}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to revoke executive access.');
+      }
+      setActionFeedback({
+        type: 'success',
+        message: `Access revoked for ${exec.fullName || 'executive'} (Ward ${exec.wardNumber}).`,
+      });
+      setExecutives((prev) => prev.filter((e) => e.uid !== exec.uid));
+      fetchExecutivesViaRest();
+    } catch (err) {
+      console.error('Revoke error:', err);
+      setActionFeedback({
+        type: 'error',
+        message: err.message || 'Error revoking executive access.',
+      });
+    } finally {
+      setRevokingUid(null);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  };
+
+  // Handler: Resend Ward Executive Credentials
+  const handleResendCredentials = async (exec) => {
+    if (!exec || !exec.uid) return;
+    setResendingUid(exec.uid);
+    setActionFeedback(null);
+    try {
+      const token = currentUser ? await currentUser.getIdToken() : '';
+      const res = await fetch(`/api/admin/ward-exec/${exec.uid}/resend`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to resend credentials.');
+      }
+      setActionFeedback({
+        type: 'success',
+        message: data.emailSent
+          ? `Fresh credentials dispatched to ${data.email}!`
+          : `Credentials refreshed for ${data.email} (SMTP in development mode; see terminal console).`,
+      });
+    } catch (err) {
+      console.error('Resend error:', err);
+      setActionFeedback({
+        type: 'error',
+        message: err.message || 'Error resending credentials.',
+      });
+    } finally {
+      setResendingUid(null);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  };
+
+  // Handler: Quick appoint from vacant ward card
+  const handleAppointWard = (wardNum) => {
+    setFormWard(String(wardNum));
+    setShowProvisionForm(true);
+    setAdminTaskTab('executives');
+    window.scrollTo({ top: 120, behavior: 'smooth' });
+  };
+
   // Handler: Provision Ward Executive
   const handleProvisionWardExec = async (e) => {
     e.preventDefault();
@@ -469,10 +574,16 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(text || `Server returned status ${res.status} (${res.statusText || 'No response body'})`);
+      }
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to provision Ward Executive');
+        throw new Error(data.error || `Failed to provision Ward Executive (Status: ${res.status})`);
       }
 
       setProvisionSuccess({
@@ -816,6 +927,24 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
         {/* Main Command Dashboard */}
         <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
+          {/* Action Feedback Toast / Banner */}
+          {actionFeedback && (
+            <div
+              role="status"
+              className={`p-3.5 rounded-[12px] text-xs font-medium flex items-center gap-2 border shadow-xs animate-in fade-in duration-150 ${
+                actionFeedback.type === 'error'
+                  ? 'bg-[#fff5f5] border-[#ffd6d6] text-[#c4232d]'
+                  : 'bg-[#eefaf3] border-[#cfeedd] text-[#156947]'
+              }`}
+            >
+              {actionFeedback.type === 'error' ? (
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              )}
+              <span>{actionFeedback.message}</span>
+            </div>
+          )}
 
           {/* Metrics Overview Bar */}
           {(adminTaskTab === 'all' || adminTaskTab === 'executives') && (
@@ -974,8 +1103,120 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </section>
           )}
 
-          {/* Tasks Container: Integrated Ward Executives & Directory */}
-          {(adminTaskTab === 'all' || adminTaskTab === 'executives') && (
+          {/* ALL OPERATIONS VIEW: 19 Municipal Wards Jurisdiction Grid */}
+          {adminTaskTab === 'all' && (
+            <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
+                    <span>Municipal Wards Jurisdiction</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-[#f5f5f7] text-[#1d1d1f] border border-[#e0e0e0]">
+                      19 Wards
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#7a7a7a]">
+                    Overview of executive assignments, active authorities, and vacant ward jurisdictions
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-[#156947] font-semibold">
+                    {metrics.assignedCount} Active
+                  </span>
+                  <span className="text-[#c4232d] font-semibold">
+                    {19 - metrics.assignedCount} Vacant
+                  </span>
+                </div>
+              </div>
+
+              {/* 19 Ward Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {Array.from({ length: 19 }, (_, i) => i + 1).map((w) => {
+                  const exec = executives.find((e) => Number(e.wardNumber) === w);
+                  const wardLabel = `Ward ${w < 10 ? `0${w}` : w}`;
+
+                  if (exec) {
+                    return (
+                      <div
+                        key={w}
+                        className="bg-white border border-[#e0e0e0] hover:border-[#cbd5e1] rounded-[14px] p-4 flex flex-col justify-between transition-all shadow-xs"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-bold text-sm text-[#1d1d1f]">{wardLabel}</span>
+                            <span className="text-xs font-semibold text-[#156947]">
+                              Active
+                            </span>
+                          </div>
+
+                          <p className="font-semibold text-xs text-[#1d1d1f] truncate">
+                            {exec.fullName}
+                          </p>
+                          <p className="text-[11px] text-[#555555] font-mono truncate mt-0.5">
+                            {exec.email}
+                          </p>
+                          <p className="text-[11px] text-[#7a7a7a] mt-0.5">
+                            {exec.phone ? (exec.phone.startsWith('+977') ? exec.phone : `+977 ${exec.phone}`) : '+977 —'}
+                          </p>
+                        </div>
+
+                        <div className="pt-3 mt-3 border-t border-[#f0f0f0] flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeExecutive(exec)}
+                            disabled={revokingUid === exec.uid}
+                            className="px-2.5 py-1 rounded text-xs font-medium text-[#c4232d] hover:bg-[#fff5f5] border border-[#ffd6dc] transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {revokingUid === exec.uid ? 'Revoking...' : 'Revoke Access'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleResendCredentials(exec)}
+                            disabled={resendingUid === exec.uid}
+                            className="text-xs font-medium text-[#0066cc] hover:underline transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {resendingUid === exec.uid ? 'Resending...' : 'Resend Credentials'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={w}
+                      className="bg-white border border-[#e0e0e0] hover:border-[#cbd5e1] rounded-[14px] p-4 flex flex-col justify-between transition-all min-h-[140px]"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-[#1d1d1f]">{wardLabel}</span>
+                        <span className="text-xs font-semibold text-[#c4232d]">
+                          Vacant
+                        </span>
+                      </div>
+
+                      <div className="py-2.5 flex items-center justify-center">
+                        <button
+                          type="button"
+                          onClick={() => handleAppointWard(w)}
+                          className="inline-flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-medium text-[#c4232d] bg-white hover:bg-[#fff5f5] border border-[#c4232d] transition-all cursor-pointer shadow-xs"
+                        >
+                          <span>+ Appoint Executive</span>
+                        </button>
+                      </div>
+
+                      <div className="text-center">
+                        <span className="text-[10px] text-[#7a7a7a]">No executive appointed</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* WARD EXECUTIVES VIEW: Provision Form & Directory */}
+          {adminTaskTab === 'executives' && (
             <div className={showProvisionForm ? "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" : "w-full"}>
               {/* Column 1: Provision Ward Executive Form */}
               {showProvisionForm && (
@@ -1046,7 +1287,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                       required
                       value={formName}
                       onChange={(e) => setFormName(e.target.value)}
-                      placeholder="e.g. Santosh Adhikari"
                       className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
@@ -1064,7 +1304,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                       required
                       value={formEmail}
                       onChange={(e) => setFormEmail(e.target.value)}
-                      placeholder="e.g. exec.ward4.biratnagar@gmail.com"
                       className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
@@ -1081,7 +1320,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                       type="tel"
                       value={formPhone}
                       onChange={(e) => setFormPhone(e.target.value)}
-                      placeholder="98XXXXXXXX"
                       className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
                     />
                   </div>
@@ -1106,20 +1344,191 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     </select>
                   </div>
 
-                  <div>
+                  <div className="relative" ref={calendarRef}>
                     <label className="block text-xs font-semibold text-[#333333] mb-1.5">
                       Tenure / Service Period
                     </label>
                     <div className="relative">
-                      <Calendar className="w-3.5 h-3.5 text-[#7a7a7a] absolute left-3 top-1/2 -translate-y-1/2" />
+                      <button
+                        type="button"
+                        onClick={() => setCalendarOpen((prev) => !prev)}
+                        className="w-7 h-7 absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center text-[#7a7a7a] hover:text-[#0066cc] hover:bg-[#eef5ff] rounded-lg transition-colors cursor-pointer"
+                        title="Open calendar"
+                        aria-label="Open calendar"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                      </button>
                       <input
                         type="text"
                         value={formTenure}
                         onChange={(e) => setFormTenure(e.target.value)}
-                        placeholder="2081 - 2086 B.S."
-                        className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-8 pr-2.5 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
+                        className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-9 pr-2.5 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
+                      />
+                      <input
+                        type="date"
+                        ref={nativeDateRef}
+                        className="sr-only"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            setFormTenure(e.target.value);
+                            setCalendarOpen(false);
+                          }
+                        }}
                       />
                     </div>
+
+                    {/* Interactive Apple-Style Calendar Popover */}
+                    {calendarOpen && (
+                      <div className="absolute z-50 mt-1.5 right-0 sm:left-0 bg-white border border-[#e0e0e0] rounded-[16px] shadow-xl p-3.5 w-64 text-xs font-sans animate-in fade-in zoom-in-95 duration-100">
+                        {/* Calendar Month & Nav */}
+                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#f0f0f0]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCalendarMonth(
+                                (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+                              )
+                            }
+                            className="p-1 rounded-md text-[#7a7a7a] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition-colors cursor-pointer"
+                            aria-label="Previous month"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <span className="font-semibold text-[#1d1d1f] text-xs">
+                            {calendarMonth.toLocaleString('default', {
+                              month: 'long',
+                              year: 'numeric',
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCalendarMonth(
+                                (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+                              )
+                            }
+                            className="p-1 rounded-md text-[#7a7a7a] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition-colors cursor-pointer"
+                            aria-label="Next month"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Weekday Labels */}
+                        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-[#7a7a7a] mb-1">
+                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+                            <div key={d} className="py-0.5">
+                              {d}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Day Grid */}
+                        <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                          {Array.from({
+                            length: new Date(
+                              calendarMonth.getFullYear(),
+                              calendarMonth.getMonth(),
+                              1
+                            ).getDay(),
+                          }).map((_, i) => (
+                            <div key={`empty-${i}`} />
+                          ))}
+                          {Array.from({
+                            length: new Date(
+                              calendarMonth.getFullYear(),
+                              calendarMonth.getMonth() + 1,
+                              0
+                            ).getDate(),
+                          }).map((_, i) => {
+                            const dayNum = i + 1;
+                            const isToday =
+                              new Date().toDateString() ===
+                              new Date(
+                                calendarMonth.getFullYear(),
+                                calendarMonth.getMonth(),
+                                dayNum
+                              ).toDateString();
+                            return (
+                              <button
+                                key={dayNum}
+                                type="button"
+                                onClick={() => {
+                                  const y = calendarMonth.getFullYear();
+                                  const m = String(calendarMonth.getMonth() + 1).padStart(2, '0');
+                                  const d = String(dayNum).padStart(2, '0');
+                                  setFormTenure(`${y}-${m}-${d}`);
+                                  setCalendarOpen(false);
+                                }}
+                                className={`w-7 h-7 mx-auto rounded-full flex items-center justify-center text-xs font-medium transition-colors cursor-pointer ${
+                                  isToday
+                                    ? 'bg-[#0066cc] text-white font-semibold shadow-sm'
+                                    : 'text-[#1d1d1f] hover:bg-[#f5f5f7] hover:text-[#0066cc]'
+                                }`}
+                              >
+                                {dayNum}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="pt-2.5 mt-2 border-t border-[#f0f0f0] space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-medium text-[#7a7a7a] uppercase tracking-wider">
+                              Quick Presets
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                try {
+                                  nativeDateRef.current?.showPicker();
+                                } catch (e) {
+                                  // Fallback click
+                                  nativeDateRef.current?.click();
+                                }
+                              }}
+                              className="text-[10px] text-[#0066cc] hover:underline font-medium cursor-pointer"
+                            >
+                              System Picker
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormTenure('2081 - 2086 B.S.');
+                                setCalendarOpen(false);
+                              }}
+                              className="px-2 py-0.5 rounded-full bg-[#f5f5f7] hover:bg-[#ebebee] text-[#1d1d1f] text-[10px] font-medium transition-colors cursor-pointer"
+                            >
+                              2081–2086 B.S.
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormTenure('2082 - 2087 B.S.');
+                                setCalendarOpen(false);
+                              }}
+                              className="px-2 py-0.5 rounded-full bg-[#f5f5f7] hover:bg-[#ebebee] text-[#1d1d1f] text-[10px] font-medium transition-colors cursor-pointer"
+                            >
+                              2082–2087 B.S.
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const yr = calendarMonth.getFullYear();
+                                setFormTenure(`${yr} - ${yr + 5}`);
+                                setCalendarOpen(false);
+                              }}
+                              className="px-2 py-0.5 rounded-full bg-[#eef5ff] hover:bg-[#d6e6fb] text-[#0066cc] text-[10px] font-medium transition-colors cursor-pointer"
+                            >
+                              5-Year A.D.
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1270,8 +1679,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                               <span className="font-mono text-[11px] font-bold text-[#0066cc] bg-[#eef5ff] border border-[#d6e6fb] px-2 py-0.5 rounded-md">
                                 {exec.executiveId || `WE-${exec.wardNumber}-1`}
                               </span>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#2e9d6a]" />
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
                                 Active
                               </span>
                             </div>
@@ -1294,13 +1702,33 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                           </div>
                         </div>
 
-                        <div className="sm:text-right flex-shrink-0 self-end sm:self-center">
-                          <span className="text-[11px] font-medium text-[#7a7a7a] block">
-                            Ward Jurisdiction
-                          </span>
-                          <span className="text-xs font-semibold text-[#1d1d1f]">
-                            Biratnagar Ward {exec.wardNumber}
-                          </span>
+                        <div className="flex sm:flex-col items-end gap-2 flex-shrink-0 self-end sm:self-center">
+                          <div className="sm:text-right hidden sm:block">
+                            <span className="text-[11px] font-medium text-[#7a7a7a] block">
+                              Ward Jurisdiction
+                            </span>
+                            <span className="text-xs font-semibold text-[#1d1d1f]">
+                              Biratnagar Ward {exec.wardNumber}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeExecutive(exec)}
+                              disabled={revokingUid === exec.uid}
+                              className="px-2.5 py-1 rounded text-xs font-medium text-[#c4232d] hover:bg-[#fff5f5] border border-[#ffd6dc] transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {revokingUid === exec.uid ? 'Revoking...' : 'Revoke Access'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResendCredentials(exec)}
+                              disabled={resendingUid === exec.uid}
+                              className="text-xs font-medium text-[#0066cc] hover:underline transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {resendingUid === exec.uid ? 'Resending...' : 'Resend Credentials'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
