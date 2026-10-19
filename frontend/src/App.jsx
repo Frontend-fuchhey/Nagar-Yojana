@@ -85,27 +85,49 @@ export default function App() {
   const [activeSector, setActiveSector] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Helper to parse current portal from URL (?portal=staff | executive | contractor)
+  const getPortalFromUrl = () => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('portal');
+    if (p === 'staff' || p === 'executive' || p === 'contractor') {
+      return p;
+    }
+    if (p === 'admin') return 'staff';
+    if (p === 'exec' || p === 'ward') return 'executive';
+    return null;
+  };
+
   // Portal View & Modal States
-  const [isStaffView, setIsStaffView] = useState(() => {
-    return window.location.search.includes('portal=staff');
-  });
+  const [activePortal, setActivePortal] = useState(() => getPortalFromUrl());
   const [selectedProjectForReport, setSelectedProjectForReport] = useState(null);
 
-  // Sync isStaffView with URL changes
+  // Sync activePortal with browser history / URL changes
   useEffect(() => {
     const handlePopState = () => {
-      setIsStaffView(window.location.search.includes('portal=staff'));
+      setActivePortal(getPortalFromUrl());
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   const handleReturnToPublic = () => {
-    setIsStaffView(false);
+    setActivePortal(null);
     const url = new URL(window.location.href);
     url.searchParams.delete('portal');
     const newPath = url.pathname + (url.search ? url.search : '') + url.hash;
     window.history.pushState({}, '', newPath);
+  };
+
+  const handlePortalChange = (newPortal) => {
+    setActivePortal(newPortal);
+    const url = new URL(window.location.href);
+    if (newPortal) {
+      url.searchParams.set('portal', newPortal);
+    } else {
+      url.searchParams.delete('portal');
+    }
+    const newPath = url.pathname + (url.search ? url.search : '') + url.hash;
+    window.history.replaceState({}, '', newPath);
   };
 
   // Fetch projects from backend API with fallback
@@ -207,9 +229,16 @@ export default function App() {
     });
   }, [projects, activeWard, activeStatus, activeSector, searchQuery]);
 
-  // If accessed with ?portal=staff or isStaffView is active, render dedicated StaffPortal
-  if (isStaffView) {
-    return <StaffPortal onReturnToPublic={handleReturnToPublic} language={language} />;
+  // If accessed with ?portal=staff | executive | contractor, render dedicated Portal
+  if (activePortal) {
+    return (
+      <StaffPortal
+        portalType={activePortal}
+        onPortalChange={handlePortalChange}
+        onReturnToPublic={handleReturnToPublic}
+        language={language}
+      />
+    );
   }
 
   return (

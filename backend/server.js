@@ -4,7 +4,8 @@ const cors = require("cors");
 const helmet = require("helmet");
 const adminRoutes = require("./routes/adminRoutes");
 const authRoutes = require("./routes/authRoutes");
-const { verifyToken, requireWardExec } = require("./middleware/authMiddleware");
+const executiveRoutes = require("./routes/executiveRoutes");
+const { verifyToken, requireWardExec, requireWardExecOrContractor } = require("./middleware/authMiddleware");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -91,14 +92,35 @@ const projects = [
 ];
 
 // GET /api/projects - Returns list of civic infrastructure projects with filter support
-app.get("/api/projects", (req, res) => {
+app.get("/api/projects", async (req, res) => {
   try {
     const rawWard = req.query.ward ? String(req.query.ward).trim() : "";
     const rawStatus = req.query.status ? String(req.query.status).trim() : "";
     const rawSector = req.query.sector ? String(req.query.sector).trim() : "";
     const rawQ = req.query.q ? String(req.query.q).trim() : "";
 
-    let filtered = [...projects];
+    let combined = [...projects];
+
+    // Merge real-time Firestore projects if available
+    try {
+      const { adminDb } = require("./firebaseAdmin");
+      const firestoreSnap = await adminDb.collection("projects").get();
+      if (!firestoreSnap.empty) {
+        const firestoreList = [];
+        firestoreSnap.forEach((doc) => {
+          firestoreList.push(doc.data());
+        });
+        const firestoreIds = new Set(firestoreList.map((p) => String(p.id)));
+        combined = [
+          ...firestoreList,
+          ...projects.filter((p) => !firestoreIds.has(String(p.id))),
+        ];
+      }
+    } catch (dbErr) {
+      // Fallback to in-memory dataset
+    }
+
+    let filtered = combined;
 
     if (rawWard && rawWard.toLowerCase() !== "all") {
       filtered = filtered.filter(
@@ -108,7 +130,7 @@ app.get("/api/projects", (req, res) => {
 
     if (rawStatus && rawStatus.toLowerCase() !== "all") {
       filtered = filtered.filter(
-        (p) => p.status.toUpperCase() === rawStatus.toUpperCase()
+        (p) => p.status && p.status.toUpperCase() === rawStatus.toUpperCase()
       );
     }
 
@@ -122,9 +144,9 @@ app.get("/api/projects", (req, res) => {
       const query = rawQ.toLowerCase();
       filtered = filtered.filter(
         (p) =>
-          p.title.toLowerCase().includes(query) ||
-          p.contractor.toLowerCase().includes(query) ||
-          p.location.toLowerCase().includes(query) ||
+          (p.title && p.title.toLowerCase().includes(query)) ||
+          (p.contractor && p.contractor.toLowerCase().includes(query)) ||
+          (p.location && p.location.toLowerCase().includes(query)) ||
           (p.description && p.description.toLowerCase().includes(query)) ||
           (p.ward && p.ward.toLowerCase().includes(query)) ||
           (p.sector && p.sector.toLowerCase().includes(query))
@@ -169,22 +191,59 @@ let grievances = [
   }
 ];
 
-// PUT /api/projects/:id - Update project progress and status (Staff / Ward Exec / Admin only)
-app.put("/api/projects/:id", verifyToken, requireWardExec, (req, res) => {
+// PUT /api/projects/:id - Update project progress and status (Staff / Ward Exec / Contractor / Admin)
+app.put("/api/projects/:id", verifyToken, requireWardExecOrContractor, async (req, res) => {
   try {
     const { id } = req.params;
-    const { progress, status } = req.body;
-    const project = projects.find((p) => p.id === Number(id));
-    if (!project) {
+    const { progress, status, remarks } = req.body;
+    const project = projects.find((p) => String(p.id) === String(id));
+
+    // Also check Firestore
+    let fsProject = null;
+    const { adminDb } = require("./firebaseAdmin");
+    const docRef = adminDb.collection("projects").doc(String(id));
+    try {
+      const snap = await docRef.get();
+      if (snap.exists) fsProject = snap.data();
+    } catch (e) {}
+
+    const targetProject = fsProject || project;
+    if (!targetProject) {
       return res.status(404).json({ error: "Project not found" });
     }
+
+    // Role check: Contractor can only update their assigned project
+    if (req.user.role === "CONTRACTOR") {
+      const isAssigned = (targetProject.contractorId && targetProject.contractorId === req.user.uid) ||
+                         (targetProject.contractorEmail && targetProject.contractorEmail === req.user.email);
+      if (!isAssigned) {
+        return res.status(403).json({ error: "Forbidden: You are not assigned to this project." });
+      }
+    }
+
+    const updates = { updatedAt: new Date().toISOString() };
     if (progress !== undefined) {
-      project.progress = Math.min(100, Math.max(0, Number(progress)));
+      const numProg = Math.min(100, Math.max(0, Number(progress)));
+      updates.progress = numProg;
+      if (project) project.progress = numProg;
     }
     if (status) {
-      project.status = String(status).toUpperCase();
+      const upperStatus = String(status).toUpperCase();
+      updates.status = upperStatus;
+      if (project) project.status = upperStatus;
     }
-    res.json({ message: "Project updated successfully", project });
+    if (remarks !== undefined) {
+      updates.contractorRemarks = String(remarks);
+      if (project) project.contractorRemarks = String(remarks);
+    }
+
+    try {
+      await docRef.set(updates, { merge: true });
+    } catch (dbErr) {
+      console.warn("Firestore project update warning:", dbErr.message);
+    }
+
+    res.json({ message: "Project updated successfully", project: { ...targetProject, ...updates } });
   } catch (err) {
     res.status(500).json({ error: "Failed to update project" });
   }
@@ -249,6 +308,7 @@ app.patch("/api/grievances/:id/status", verifyToken, requireWardExec, (req, res)
 // Mount API routers
 app.use("/api/admin", adminRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/executive", executiveRoutes);
 
 // Root health check route for UptimeRobot / monitoring
 app.get("/", (req, res) => {

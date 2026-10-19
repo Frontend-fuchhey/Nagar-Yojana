@@ -41,16 +41,18 @@ import {
   ChevronRight,
   Send,
   X,
+  Briefcase,
+  Plus,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { API_BASE_URL } from '../apiConfig';
 
 const API_BASE = API_BASE_URL;
 
-export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
+export default function StaffPortal({ portalType = 'staff', onPortalChange, onReturnToPublic, language = 'en' }) {
   // Authentication & User State
   const [currentUser, setCurrentUser] = useState(null);
-  const [userRole, setUserRole] = useState(null); // 'SUPER_ADMIN' | 'WARD_EXEC'
+  const [userRole, setUserRole] = useState(null); // 'SUPER_ADMIN' | 'WARD_EXEC' | 'CONTRACTOR'
   const [userProfile, setUserProfile] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
@@ -59,6 +61,34 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [lockInfo, setLockInfo] = useState(null); // { email, until } when an email is locked
   const [inactivityNotice, setInactivityNotice] = useState('');
+
+  // Ward Executive: Create Project Form State
+  const [createProjTitle, setCreateProjTitle] = useState('');
+  const [createProjSector, setCreateProjSector] = useState('Roads & Drainage');
+  const [createProjLocation, setCreateProjLocation] = useState('');
+  const [createProjBudget, setCreateProjBudget] = useState('');
+  const [createProjTargetDate, setCreateProjTargetDate] = useState('');
+  const [createProjDescription, setCreateProjDescription] = useState('');
+  const [createProjLoading, setCreateProjLoading] = useState(false);
+  const [createProjFeedback, setCreateProjFeedback] = useState(null);
+
+  // Ward Executive: Appoint Contractor Form State
+  const [contractorName, setContractorName] = useState('');
+  const [contractorEmail, setContractorEmail] = useState('');
+  const [contractorPhone, setContractorPhone] = useState('');
+  const [contractorProjectId, setContractorProjectId] = useState('');
+  const [contractorLoading, setContractorLoading] = useState(false);
+  const [contractorSuccessData, setContractorSuccessData] = useState(null);
+  const [contractorError, setContractorError] = useState(null);
+  const [wardContractors, setWardContractors] = useState([]);
+  const [resendingContractorUid, setResendingContractorUid] = useState(null);
+  const [revokingContractorUid, setRevokingContractorUid] = useState(null);
+
+  // Contractor Portal State
+  const [contractorProjects, setContractorProjects] = useState([]);
+  const [contractorUpdatingId, setContractorUpdatingId] = useState(null);
+  const [contractorFeedbackMsg, setContractorFeedbackMsg] = useState({});
+  const [contractorFormState, setContractorFormState] = useState({}); // { [projectId]: { progress, status, remarks } }
 
   // Municipal Maintenance State (when false, Ward Executive & staff logins are frozen; only Super Admin can log in)
   const [systemActive, setSystemActive] = useState(true);
@@ -174,11 +204,26 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           // Resolve role strictly from token claims and Firestore database profile
           if (detectedRole === 'SUPER_ADMIN' || profileData.role === 'SUPER_ADMIN') {
             detectedRole = 'SUPER_ADMIN';
+          } else if (
+            detectedRole === 'CONTRACTOR' ||
+            profileData.role === 'CONTRACTOR' ||
+            profileData.contractorId
+          ) {
+            detectedRole = 'CONTRACTOR';
           } else if (profileData.wardNumber || tokenResult.claims?.wardNumber) {
             detectedRole = 'WARD_EXEC';
           }
 
           const resolvedRole = detectedRole || profileData.role || 'WARD_EXEC';
+
+          // Route Separation & Safe Redirection
+          if (resolvedRole === 'WARD_EXEC' && portalType !== 'executive') {
+            onPortalChange?.('executive');
+          } else if (resolvedRole === 'CONTRACTOR' && portalType !== 'contractor') {
+            onPortalChange?.('contractor');
+          } else if (resolvedRole === 'SUPER_ADMIN' && portalType !== 'staff') {
+            onPortalChange?.('staff');
+          }
 
           // If Municipal Maintenance Break is active, freeze login for all roles except SUPER_ADMIN
           if (resolvedRole !== 'SUPER_ADMIN') {
@@ -214,9 +259,20 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           setUserProfile({
             ...profileData,
             email: user.email,
-            displayName: profileData.fullName || user.displayName || (detectedRole === 'SUPER_ADMIN' ? 'Chief Municipal Admin' : 'Ward Executive'),
+            displayName:
+              profileData.companyName ||
+              profileData.fullName ||
+              user.displayName ||
+              (resolvedRole === 'SUPER_ADMIN'
+                ? 'Chief Municipal Admin'
+                : resolvedRole === 'CONTRACTOR'
+                ? 'Civic Contractor'
+                : 'Ward Executive'),
             wardNumber: profileData.wardNumber || tokenResult.claims?.wardNumber || null,
             executiveId: profileData.executiveId || null,
+            contractorId: profileData.contractorId || null,
+            projectId: profileData.projectId || null,
+            projectTitle: profileData.projectTitle || null,
           });
         } catch (err) {
           console.error('Error resolving user role:', err);
@@ -511,11 +567,67 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     }
   };
 
+  // Load appointed contractors for this Ward Executive's ward
+  const loadWardContractors = async () => {
+    try {
+      const token = currentUser ? await currentUser.getIdToken() : null;
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/executive/contractors`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWardContractors(data.contractors || []);
+      }
+    } catch (err) {
+      console.warn('Could not fetch contractors:', err.message);
+    }
+  };
+
+  // Load projects assigned to this logged-in Contractor
+  const loadContractorProjects = async () => {
+    try {
+      const projRes = await fetch(`${API_BASE}/api/projects`);
+      if (projRes.ok) {
+        const allProj = await projRes.json();
+        const myUid = currentUser?.uid;
+        const myEmail = (currentUser?.email || '').toLowerCase();
+        const assigned = allProj.filter(
+          (p) =>
+            (p.contractorId && p.contractorId === myUid) ||
+            (p.contractorEmail && p.contractorEmail.toLowerCase() === myEmail) ||
+            (userProfile?.projectId && String(p.id) === String(userProfile?.projectId))
+        );
+        setContractorProjects(assigned);
+
+        // Pre-fill form state for each assigned project
+        const initialState = {};
+        assigned.forEach((p) => {
+          initialState[p.id] = {
+            progress: p.progress || 0,
+            status: p.status || 'ACTIVE',
+            remarks: p.contractorRemarks || '',
+          };
+        });
+        setContractorFormState(initialState);
+      }
+    } catch (err) {
+      console.warn('Error loading contractor projects:', err);
+    }
+  };
+
   useEffect(() => {
     if (userRole === 'WARD_EXEC' && userProfile?.wardNumber) {
       loadWardWorkspaceData(userProfile.wardNumber);
+      loadWardContractors();
     }
   }, [userRole, userProfile]);
+
+  useEffect(() => {
+    if (userRole === 'CONTRACTOR' && currentUser) {
+      loadContractorProjects();
+    }
+  }, [userRole, currentUser, userProfile]);
 
   // 4. Super Admin: Locked Accounts
   const [lockouts, setLockouts] = useState([]);
@@ -1034,6 +1146,222 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     }
   };
 
+  // Live Dynamic Preview for Next Contractor Sequential ID: CON-{wardNumber}-{seq}
+  const dynamicContractorPreviewId = useMemo(() => {
+    const ward = Number(userProfile?.wardNumber) || 4;
+    const sameWard = wardContractors.filter((c) => Number(c.wardNumber) === ward);
+    return `CON-${ward}-${sameWard.length + 1}`;
+  }, [userProfile?.wardNumber, wardContractors]);
+
+  // Handler: Executive Creates a New Project
+  const handleCreateProject = async (e) => {
+    e.preventDefault();
+    setCreateProjLoading(true);
+    setCreateProjFeedback(null);
+    try {
+      const token = await currentUser.getIdToken();
+      const payload = {
+        title: createProjTitle.trim(),
+        sector: createProjSector,
+        location: createProjLocation.trim(),
+        budget: createProjBudget.trim(),
+        targetDate: createProjTargetDate.trim(),
+        description: createProjDescription.trim(),
+        wardNumber: userProfile?.wardNumber || 4,
+      };
+
+      const res = await fetch(`${API_BASE}/api/executive/create-project`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create project.');
+      }
+
+      setCreateProjFeedback({
+        type: 'success',
+        message: `Project "${payload.title}" created successfully for Ward ${payload.wardNumber}!`,
+      });
+
+      setCreateProjTitle('');
+      setCreateProjLocation('');
+      setCreateProjBudget('');
+      setCreateProjTargetDate('');
+      setCreateProjDescription('');
+
+      if (userProfile?.wardNumber) {
+        await loadWardWorkspaceData(userProfile.wardNumber);
+      }
+
+      setTimeout(() => {
+        setActiveTab('projects');
+        setCreateProjFeedback(null);
+      }, 1800);
+    } catch (err) {
+      setCreateProjFeedback({ type: 'error', message: err.message || 'Error creating project.' });
+    } finally {
+      setCreateProjLoading(false);
+    }
+  };
+
+  // Handler: Executive Appoints and Provisions a Contractor
+  const handleAppointContractor = async (e) => {
+    e.preventDefault();
+    setContractorLoading(true);
+    setContractorError(null);
+    setContractorSuccessData(null);
+    try {
+      const token = await currentUser.getIdToken();
+      const payload = {
+        companyName: contractorName.trim(),
+        email: contractorEmail.trim().toLowerCase(),
+        phone: contractorPhone.trim(),
+        projectId: contractorProjectId,
+        wardNumber: userProfile?.wardNumber || 4,
+      };
+
+      const res = await fetch(`${API_BASE}/api/executive/provision-contractor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to appoint contractor.');
+      }
+
+      setContractorSuccessData({
+        contractorId: data.contractorId,
+        companyName: payload.companyName,
+        email: payload.email,
+        emailSent: data.emailSent,
+      });
+
+      setContractorName('');
+      setContractorEmail('');
+      setContractorPhone('');
+      setContractorProjectId('');
+
+      if (userProfile?.wardNumber) {
+        await loadWardWorkspaceData(userProfile.wardNumber);
+        await loadWardContractors();
+      }
+    } catch (err) {
+      setContractorError(err.message || 'Failed to appoint contractor.');
+    } finally {
+      setContractorLoading(false);
+    }
+  };
+
+  // Handler: Resend Contractor Credentials
+  const handleResendContractor = async (contractor) => {
+    if (!contractor || !contractor.uid) return;
+    setResendingContractorUid(contractor.uid);
+    try {
+      const token = await currentUser.getIdToken();
+      const res = await fetch(`${API_BASE}/api/executive/contractor/${contractor.uid}/resend`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to resend credentials.');
+      alert(data.emailSent ? `Credentials resent to ${contractor.email}!` : 'Credentials updated.');
+    } catch (err) {
+      alert('Error resending credentials: ' + (err.message || 'Error'));
+    } finally {
+      setResendingContractorUid(null);
+    }
+  };
+
+  // Handler: Revoke Contractor
+  const handleRevokeContractor = async (contractor) => {
+    if (!contractor || !contractor.uid) return;
+    const confirmed = window.confirm(
+      `Revoke contractor appointment for ${contractor.companyName || contractor.email}? Their portal access will be permanently revoked.`
+    );
+    if (!confirmed) return;
+
+    setRevokingContractorUid(contractor.uid);
+    try {
+      const token = await currentUser.getIdToken();
+      const res = await fetch(`${API_BASE}/api/executive/contractor/${contractor.uid}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to revoke contractor.');
+      await loadWardContractors();
+      if (userProfile?.wardNumber) await loadWardWorkspaceData(userProfile.wardNumber);
+    } catch (err) {
+      alert('Error revoking contractor: ' + (err.message || 'Error'));
+    } finally {
+      setRevokingContractorUid(null);
+    }
+  };
+
+  // Handler: Contractor Saves Project Milestone Progress
+  const handleContractorSaveProgress = async (projectId) => {
+    const fState = contractorFormState[projectId] || {};
+    setContractorUpdatingId(projectId);
+    setContractorFeedbackMsg((prev) => ({ ...prev, [projectId]: null }));
+    try {
+      const token = await currentUser.getIdToken();
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          progress: fState.progress,
+          status: fState.status,
+          remarks: fState.remarks,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update milestone progress.');
+
+      setContractorFeedbackMsg((prev) => ({
+        ...prev,
+        [projectId]: { type: 'success', text: 'Milestone progress saved successfully!' },
+      }));
+
+      // Update local projects
+      setContractorProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectId
+            ? { ...p, progress: Number(fState.progress), status: fState.status, contractorRemarks: fState.remarks }
+            : p
+        )
+      );
+
+      setTimeout(() => {
+        setContractorFeedbackMsg((prev) => {
+          const next = { ...prev };
+          delete next[projectId];
+          return next;
+        });
+      }, 4000);
+    } catch (err) {
+      setContractorFeedbackMsg((prev) => ({
+        ...prev,
+        [projectId]: { type: 'error', text: err.message || 'Failed to update progress.' },
+      }));
+    } finally {
+      setContractorUpdatingId(null);
+    }
+  };
+
   // Loading Screen while resolving Auth state
   if (authLoading) {
     return (
@@ -1066,15 +1394,28 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 alt="Biratnagar City Gate Logo"
                 className="h-16 w-auto object-contain mx-auto mb-4"
               />
-              <h1 className="text-[28px] font-semibold tracking-tight flex items-center justify-center gap-1.5">
+              <div className="flex justify-center mb-2">
+                <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
+                  {portalType === 'contractor'
+                    ? 'Civic Contractor Gateway'
+                    : portalType === 'executive'
+                    ? 'Ward Executive Gateway'
+                    : 'Super Admin Command Gateway'}
+                </span>
+              </div>
+              <h1 className="text-[26px] font-semibold tracking-tight flex items-center justify-center gap-1.5">
                 <span className="text-[#DC143C]">Nagar</span>
                 <span className="text-[#156947]">योजना</span>
               </h1>
-              <p className="text-sm text-[#7a7a7a] mt-2">
-                Biratnagar Metropolitan City · Municipal Command Gateway
+              <p className="text-sm font-medium text-[#1d1d1f] mt-1.5">
+                {portalType === 'contractor'
+                  ? 'Contractor Project Execution Workspace'
+                  : portalType === 'executive'
+                  ? 'Ward Executive Workspace'
+                  : 'Municipal Administration · Super Admin'}
               </p>
               <p className="text-xs text-[#7a7a7a] mt-0.5">
-                विराटनगर महानगरपालिका · आन्तरिक प्रशासन
+                Biratnagar Metropolitan City · विराटनगर महानगरपालिका
               </p>
             </div>
 
@@ -1087,7 +1428,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#b45309]" />
                 <div className="space-y-0.5 leading-relaxed">
                   <strong className="font-semibold block text-[#78350f]">Municipal Maintenance Break Active</strong>
-                  <span>Ward Executive & staff logins are temporarily frozen. Only Chief Municipal Administrator (Super Admin) credentials can access the command center.</span>
+                  <span>Ward Executive & contractor logins are temporarily frozen. Only Chief Municipal Administrator (Super Admin) credentials can access the command center.</span>
                 </div>
               </div>
             )}
@@ -1122,7 +1463,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             <form onSubmit={handleSignIn} className="space-y-4">
               <div>
                 <label htmlFor="staff-email" className="block text-xs font-semibold text-[#333333] mb-1.5">
-                  Official Municipal Email
+                  {portalType === 'contractor'
+                    ? 'Contractor Login Email'
+                    : portalType === 'executive'
+                    ? 'Official Ward Executive Email'
+                    : 'Chief Municipal Administrator Email'}
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1135,6 +1480,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     onChange={(e) => setLoginEmail(e.target.value)}
                     onBlur={handleEmailBlur}
                     disabled={loginSubmitting || isLoginLocked}
+                    placeholder="name@shrawankarki.com.np"
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
@@ -1142,7 +1488,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
               <div>
                 <label htmlFor="staff-password" className="block text-xs font-semibold text-[#333333] mb-1.5">
-                  Passphrase / Password
+                  Password
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1154,6 +1500,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     disabled={loginSubmitting || isLoginLocked}
+                    placeholder="••••••••••••"
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
@@ -1172,16 +1519,63 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    <span>Sign In to Staff Portal</span>
+                    <span>
+                      {portalType === 'contractor'
+                        ? 'Sign In to Contractor Portal'
+                        : portalType === 'executive'
+                        ? 'Sign In to Executive Workspace'
+                        : 'Sign In to Super Admin'}
+                    </span>
                   </>
                 )}
               </button>
             </form>
 
-            <div className="mt-7 pt-5 border-t border-[#f0f0f0] text-center">
-              <p className="text-[11px] text-[#7a7a7a] leading-relaxed">
-                Authorized municipal staff and designated ward executives only. Unauthorized access attempts are audited and logged.
-              </p>
+            {/* Portal Switcher & Public Return */}
+            <div className="mt-6 pt-5 border-t border-[#f0f0f0] space-y-3 text-center">
+              <div className="flex items-center justify-center gap-2 flex-wrap text-xs text-[#7a7a7a]">
+                <span>Switch Portal:</span>
+                <button
+                  type="button"
+                  onClick={() => onPortalChange?.('staff')}
+                  className={`font-semibold hover:underline cursor-pointer ${
+                    portalType === 'staff' ? 'text-[#0066cc]' : 'text-[#555555]'
+                  }`}
+                >
+                  Super Admin
+                </button>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => onPortalChange?.('executive')}
+                  className={`font-semibold hover:underline cursor-pointer ${
+                    portalType === 'executive' ? 'text-[#0066cc]' : 'text-[#555555]'
+                  }`}
+                >
+                  Ward Executive
+                </button>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => onPortalChange?.('contractor')}
+                  className={`font-semibold hover:underline cursor-pointer ${
+                    portalType === 'contractor' ? 'text-[#0066cc]' : 'text-[#555555]'
+                  }`}
+                >
+                  Contractor
+                </button>
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  onClick={onReturnToPublic}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-[#7a7a7a] hover:text-[#1d1d1f] hover:underline cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Return to Public Nagarयोजना Portal</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2319,6 +2713,301 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   }
 
   // ==========================================
+  // VIEW 2.5: CONTRACTOR WORKSPACE
+  // ==========================================
+  if (userRole === 'CONTRACTOR') {
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#0066cc] selection:text-white flex flex-col font-sans">
+        {/* Contractor Top Header */}
+        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-[#e0e0e0]">
+          <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img
+                src="/Biratnagar%20City%20Gate%20Logo.png"
+                alt="City Gate Logo"
+                className="h-10 w-auto object-contain"
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-lg tracking-tight">
+                    <span className="text-[#DC143C]">Nagar</span>
+                    <span className="text-[#156947]">योजना</span>
+                  </span>
+                  <span className="px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                    Civic Contractor Workspace
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#7a7a7a]">
+                  Biratnagar Metropolitan City · Field Progress & Execution
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onReturnToPublic}
+                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-[#7a7a7a]" />
+                <span>Public Site</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-[#c4232d] bg-[#fff5f5] hover:bg-[#ffe9e9] border border-[#ffd6d6] transition-colors cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Contractor Main Body */}
+        <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
+          {/* Welcome Profile Card */}
+          <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 text-[#1d1d1f] flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-sm">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                  Contractor ID: {userProfile?.contractorId || 'CON-4-1'}
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#eef5ff] text-[#0066cc] border border-[#d6e6fb]">
+                  Jurisdiction: Ward {userProfile?.wardNumber || '04'}
+                </span>
+              </div>
+
+              <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+                {userProfile?.companyName || userProfile?.displayName || 'Civic Infrastructure Contractor'}
+              </h1>
+              <p className="text-sm text-[#7a7a7a]">
+                Official Login: <strong className="text-[#1d1d1f]">{currentUser.email}</strong> · Biratnagar Metropolitan City Appointed Vendor
+              </p>
+            </div>
+
+            <div className="p-4 bg-[#f9fafb] border border-[#e5e7eb] rounded-[14px] text-xs text-[#4b5563] max-w-sm space-y-1">
+              <strong className="block text-[#111827] font-semibold">Reporting Authorization</strong>
+              <p className="leading-relaxed">
+                You are authorized to report completion milestones, update physical progress percentage, and notify the metropolitan administration upon work completion.
+              </p>
+            </div>
+          </section>
+
+          {/* Assigned Projects Header */}
+          <div className="flex items-center justify-between pt-2">
+            <div>
+              <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight">
+                Assigned Civic Projects ({contractorProjects.length})
+              </h2>
+              <p className="text-xs text-[#7a7a7a]">
+                Projects officially assigned to your company by the Ward Executive.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={loadContractorProjects}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#555555] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {/* Projects List */}
+          {contractorProjects.length === 0 ? (
+            <div className="p-10 text-center bg-white rounded-[18px] border border-[#e0e0e0] shadow-sm">
+              <Building2 className="w-10 h-10 text-[#9ca3af] mx-auto mb-3" />
+              <h3 className="text-base font-semibold text-[#1d1d1f]">
+                No Projects Currently Assigned
+              </h3>
+              <p className="text-xs text-[#7a7a7a] mt-1 max-w-md mx-auto leading-relaxed">
+                Your contractor account is registered, but no active projects are currently linked. Your Ward Executive will assign projects to your account upon contract finalization.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {contractorProjects.map((project) => {
+                const fState = contractorFormState[project.id] || {
+                  progress: project.progress || 0,
+                  status: project.status || 'ACTIVE',
+                  remarks: project.contractorRemarks || '',
+                };
+
+                return (
+                  <div
+                    key={project.id}
+                    className="bg-white rounded-[18px] p-6 border border-[#e0e0e0] shadow-sm flex flex-col justify-between space-y-5"
+                  >
+                    <div>
+                      {/* Top Badges */}
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
+                          {project.sector || 'Roads & Drainage'}
+                        </span>
+                        <span
+                          className={`text-xs font-semibold px-2.5 py-0.5 rounded-full uppercase border ${
+                            fState.status === 'COMPLETED'
+                              ? 'bg-[#eefaf3] text-[#156947] border-[#cfeedd]'
+                              : fState.status === 'ACTIVE'
+                              ? 'bg-[#eef5ff] text-[#0066cc] border-[#d6e6fb]'
+                              : 'bg-[#fff8e6] text-[#8a5a00] border-[#fbe8b5]'
+                          }`}
+                        >
+                          {fState.status}
+                        </span>
+                      </div>
+
+                      <h3 className="text-lg font-semibold text-[#1d1d1f]">
+                        {project.title}
+                      </h3>
+                      <p className="text-xs text-[#7a7a7a] mt-1">
+                        Location: {project.location} · Jurisdiction: {project.ward || `Ward ${project.wardNumber}`}
+                      </p>
+
+                      <div className="grid grid-cols-2 gap-2 mt-3 p-3 bg-[#fafafc] rounded-[12px] border border-[#eef0f3] text-xs">
+                        <div>
+                          <span className="text-[#7a7a7a] block text-[11px]">Budget Allocation:</span>
+                          <strong className="text-[#1d1d1f] font-mono">NPR {project.budget}</strong>
+                        </div>
+                        <div>
+                          <span className="text-[#7a7a7a] block text-[11px]">Target Date:</span>
+                          <strong className="text-[#1d1d1f]">{project.date || '2082-01-01 (B.S.)'}</strong>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-[#4b5563] mt-3 leading-relaxed">
+                        {project.description}
+                      </p>
+                    </div>
+
+                    {/* Progress Reporting Controls */}
+                    <div className="pt-4 border-t border-[#f0f0f2] space-y-4">
+                      {/* Physical Progress Slider */}
+                      <div>
+                        <div className="flex items-center justify-between text-xs font-semibold text-[#1d1d1f] mb-1.5">
+                          <span>Milestone Physical Progress</span>
+                          <span className="font-mono text-[#156947] font-bold text-base">
+                            {fState.progress}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={fState.progress}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setContractorFormState((prev) => ({
+                              ...prev,
+                              [project.id]: { ...fState, progress: val },
+                            }));
+                          }}
+                          className="w-full accent-[#156947] cursor-pointer h-2 bg-[#e5e7eb] rounded-lg"
+                        />
+                        <div className="flex justify-between text-[10px] text-[#9ca3af] mt-1 font-mono">
+                          <span>0% (Commenced)</span>
+                          <span>50% (Mid-Term)</span>
+                          <span>100% (Completed)</span>
+                        </div>
+                      </div>
+
+                      {/* Milestone Status Selector */}
+                      <div>
+                        <label className="block text-xs font-semibold text-[#333333] mb-1">
+                          Execution Status
+                        </label>
+                        <select
+                          value={fState.status}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setContractorFormState((prev) => ({
+                              ...prev,
+                              [project.id]: { ...fState, status: val },
+                            }));
+                          }}
+                          className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3 py-2 text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent cursor-pointer"
+                        >
+                          <option value="ACTIVE">ACTIVE · Construction Underway</option>
+                          <option value="DELAYED">DELAYED · Impeded by Weather / Materials</option>
+                          <option value="COMPLETED">COMPLETED · Final Handover Ready</option>
+                        </select>
+                      </div>
+
+                      {/* Progress Remarks / Field Notes */}
+                      <div>
+                        <label className="block text-xs font-semibold text-[#333333] mb-1">
+                          Contractor Field Progress Remarks
+                        </label>
+                        <input
+                          type="text"
+                          value={fState.remarks}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setContractorFormState((prev) => ({
+                              ...prev,
+                              [project.id]: { ...fState, remarks: val },
+                            }));
+                          }}
+                          placeholder="e.g. Sub-grade excavation completed; gravel compaction scheduled."
+                          className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3 py-2 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent"
+                        />
+                      </div>
+
+                      {/* Save Button & Feedback */}
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          {contractorFeedbackMsg[project.id] && (
+                            <span
+                              className={`text-xs font-semibold inline-flex items-center gap-1 ${
+                                contractorFeedbackMsg[project.id].type === 'success'
+                                  ? 'text-[#156947]'
+                                  : 'text-[#c4232d]'
+                              }`}
+                            >
+                              {contractorFeedbackMsg[project.id].type === 'success' ? (
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                              )}
+                              <span>{contractorFeedbackMsg[project.id].text}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={contractorUpdatingId === project.id}
+                          onClick={() => handleContractorSaveProgress(project.id)}
+                          className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full text-xs font-semibold text-white bg-[#156947] hover:bg-[#0f4f35] transition-all shadow-sm cursor-pointer disabled:opacity-60"
+                        >
+                          {contractorUpdatingId === project.id ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Saving Milestones...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Save Milestone Progress</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // ==========================================
   // VIEW 3: WARD EXECUTIVE WORKSPACE
   // ==========================================
   return (
@@ -2355,7 +3044,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5 text-[#7a7a7a]" />
-              <span>Public Portal</span>
+              <span>Public Site</span>
             </button>
 
             <button
@@ -2373,7 +3062,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
       {/* Ward Executive Main Container */}
       <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full space-y-6">
         {/* Profile & Executive Badge Banner */}
-        <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 text-[#1d1d1f] flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 text-[#1d1d1f] flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-sm">
           <div className="space-y-2">
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-[#eef5ff] text-[#0066cc] border border-[#d6e6fb]">
@@ -2381,7 +3070,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
                 <span className="w-2 h-2 rounded-full bg-[#2e9d6a]" />
-                Authorized Executive
+                Authorized Ward Executive
               </span>
             </div>
 
@@ -2393,26 +3082,35 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <button
               type="button"
-              onClick={onReturnToPublic}
-              className="sm:hidden inline-flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-medium bg-white text-[#1d1d1f] border border-[#e0e0e0]"
+              onClick={() => setActiveTab('create-project')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors shadow-sm cursor-pointer"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Public Site</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Project</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('appoint-contractor')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold text-[#156947] bg-[#eefaf3] hover:bg-[#d1f2e0] border border-[#cfeedd] transition-colors cursor-pointer"
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              <span>Appoint Contractor</span>
             </button>
           </div>
         </section>
 
-        {/* Tab Controls: Ward Projects vs Citizen Grievances */}
-        <div className="flex items-center gap-2 border-b border-[#e0e0e0] pb-3">
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-[#e0e0e0] pb-3 overflow-x-auto">
           <button
             type="button"
             onClick={() => setActiveTab('projects')}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
               activeTab === 'projects'
-                ? 'bg-[#0066cc] text-white'
+                ? 'bg-[#0066cc] text-white shadow-sm'
                 : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
             }`}
           >
@@ -2422,10 +3120,49 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
           <button
             type="button"
+            onClick={() => setActiveTab('create-project')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'create-project'
+                ? 'bg-[#0066cc] text-white shadow-sm'
+                : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Create Project</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('appoint-contractor')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'appoint-contractor'
+                ? 'bg-[#0066cc] text-white shadow-sm'
+                : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
+            }`}
+          >
+            <Briefcase className="w-4 h-4" />
+            <span>Appoint Contractor</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('contractors')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'contractors'
+                ? 'bg-[#0066cc] text-white shadow-sm'
+                : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Contractors Directory ({wardContractors.length})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('grievances')}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
               activeTab === 'grievances'
-                ? 'bg-[#0066cc] text-white'
+                ? 'bg-[#0066cc] text-white shadow-sm'
                 : 'bg-white text-[#1d1d1f] hover:bg-[#f5f5f7] border border-[#e0e0e0]'
             }`}
           >
@@ -2434,7 +3171,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </button>
         </div>
 
-        {/* TAB 1: Real-Time Projects in Ward */}
+        {/* TAB 1: Ward Projects (Read-Only Display Bars) */}
         {activeTab === 'projects' && (
           <section className="space-y-4">
             <div className="flex items-center justify-between">
@@ -2443,24 +3180,32 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                   Infrastructure Projects in Ward {userProfile?.wardNumber || '04'}
                 </h2>
                 <p className="text-xs text-[#7a7a7a]">
-                  Update project completion milestones, physical progress, and status.
+                  Executive overview with verified physical progress reported by appointed contractors.
                 </p>
               </div>
             </div>
 
             {wardProjects.length === 0 ? (
-              <div className="p-8 text-center bg-white rounded-[18px] border border-[#e0e0e0]">
-                <Building2 className="w-8 h-8 text-[#7a7a7a] mx-auto mb-2" />
-                <p className="text-sm font-semibold text-[#1d1d1f]">
+              <div className="p-10 text-center bg-white rounded-[18px] border border-[#e0e0e0] shadow-sm">
+                <Building2 className="w-10 h-10 text-[#7a7a7a] mx-auto mb-2" />
+                <p className="text-base font-semibold text-[#1d1d1f]">
                   No projects currently listed for Ward {userProfile?.wardNumber || '04'}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('create-project')}
+                  className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create First Ward Project</span>
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {wardProjects.map((project) => (
                   <div
                     key={project.id}
-                    className="bg-white rounded-[18px] p-5 border border-[#e0e0e0] flex flex-col justify-between space-y-4"
+                    className="bg-white rounded-[18px] p-5 border border-[#e0e0e0] shadow-sm flex flex-col justify-between space-y-4"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
@@ -2484,79 +3229,57 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
                         {project.title}
                       </h3>
                       <p className="text-xs text-[#7a7a7a] mt-1">
-                        {project.location} · Contractor: {project.contractor}
+                        Location: {project.location} · Budget: <span className="font-mono font-semibold text-[#1d1d1f]">NPR {project.budget}</span>
                       </p>
                       <p className="text-xs text-[#333333] mt-2 line-clamp-2">
                         {project.description}
                       </p>
                     </div>
 
-                    {/* Progress Slider & Status Editor */}
-                    <div className="pt-3 border-t border-[#f0f0f0] space-y-3">
-                      <div>
-                        <div className="flex items-center justify-between text-xs font-semibold text-[#333333] mb-1">
-                          <span>Physical Progress</span>
-                          <span className="font-mono text-[#156947] font-bold">
-                            {project.progress}%
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={project.progress || 0}
-                          onChange={(e) => {
-                            const val = Number(e.target.value);
-                            setWardProjects((prev) =>
-                              prev.map((p) =>
-                                p.id === project.id ? { ...p, progress: val } : p
-                              )
-                            );
-                          }}
-                          className="w-full accent-[#0066cc] cursor-pointer"
+                    {/* Read-Only Physical Progress Bar & Contractor Info */}
+                    <div className="pt-3 border-t border-[#f0f0f0] space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-semibold text-[#333333]">
+                        <span className="text-[#555555]">Physical Progress (Contractor Verified)</span>
+                        <span className="font-mono text-[#156947] font-bold text-sm">
+                          {project.progress || 0}%
+                        </span>
+                      </div>
+
+                      {/* Display Bar */}
+                      <div className="w-full bg-[#f0f0f2] h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-[#156947] h-full rounded-full transition-all duration-500 ease-out"
+                          style={{ width: `${Math.min(100, Math.max(0, project.progress || 0))}%` }}
                         />
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={project.status}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setWardProjects((prev) =>
-                              prev.map((p) =>
-                                p.id === project.id ? { ...p, status: val } : p
-                              )
-                            );
-                          }}
-                          className="flex-1 bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-2.5 py-2 text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
-                        >
-                          <option value="ACTIVE">Status: ACTIVE</option>
-                          <option value="DELAYED">Status: DELAYED</option>
-                          <option value="COMPLETED">Status: COMPLETED</option>
-                        </select>
-
-                        <button
-                          type="button"
-                          disabled={updatingProjectId === project.id}
-                          onClick={() =>
-                            handleUpdateProject(project.id, project.progress, project.status)
-                          }
-                          className="px-4 py-2 rounded-full text-xs font-medium text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors flex items-center gap-1 disabled:opacity-60 cursor-pointer"
-                        >
-                          {updatingProjectId === project.id ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Check className="w-3.5 h-3.5" />
-                          )}
-                          <span>Save Progress</span>
-                        </button>
+                      {/* Appointed Contractor Status */}
+                      <div className="flex items-center justify-between pt-1 text-xs">
+                        <span className="text-[#7a7a7a]">Appointed Contractor:</span>
+                        {project.contractor && project.contractor !== 'Pending Appointment' ? (
+                          <span className="font-semibold text-[#1d1d1f] flex items-center gap-1.5 bg-[#f8fafc] px-2.5 py-0.5 rounded-full border border-[#e2e8f0]">
+                            <Briefcase className="w-3.5 h-3.5 text-[#156947]" />
+                            <span>{project.contractor}</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContractorProjectId(String(project.id));
+                              setActiveTab('appoint-contractor');
+                            }}
+                            className="font-semibold text-[#0066cc] hover:underline cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Appoint Contractor</span>
+                          </button>
+                        )}
                       </div>
 
-                      {projectUpdateFeedback[project.id] && (
-                        <p className="text-[11px] font-semibold text-[#156947] flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          {projectUpdateFeedback[project.id]}
-                        </p>
+                      {project.contractorRemarks && (
+                        <div className="p-2 bg-[#f8fafc] rounded-lg border border-[#eef0f3] text-[11px] text-[#4b5563]">
+                          <strong className="text-[#1d1d1f]">Contractor Remark:</strong> {project.contractorRemarks}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2566,7 +3289,409 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </section>
         )}
 
-        {/* TAB 2: Citizen Grievances in Ward */}
+        {/* TAB 2: Create Project Module */}
+        {activeTab === 'create-project' && (
+          <section className="bg-white rounded-[18px] p-6 sm:p-8 border border-[#e0e0e0] shadow-sm max-w-2xl mx-auto space-y-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#eef5ff] text-[#0066cc] border border-[#d6e6fb]">
+                  Ward {userProfile?.wardNumber || '04'} Development
+                </span>
+              </div>
+              <h2 className="text-xl font-semibold text-[#1d1d1f] tracking-tight">
+                Create Civic Infrastructure Project
+              </h2>
+              <p className="text-xs text-[#7a7a7a] mt-1">
+                Propose and register a new infrastructure project under the Biratnagar Metropolitan City civic budget.
+              </p>
+            </div>
+
+            {createProjFeedback && (
+              <div
+                className={`p-3.5 rounded-[12px] text-xs font-semibold flex items-center gap-2 ${
+                  createProjFeedback.type === 'success'
+                    ? 'bg-[#eefaf3] text-[#156947] border border-[#cfeedd]'
+                    : 'bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6]'
+                }`}
+              >
+                {createProjFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                )}
+                <span>{createProjFeedback.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateProject} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#333333] mb-1">
+                  Project Title <span className="text-[#c4232d]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={createProjTitle}
+                  onChange={(e) => setCreateProjTitle(e.target.value)}
+                  placeholder="e.g. Ward 04 Solar Streetlight Installation"
+                  className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Sector Classification <span className="text-[#c4232d]">*</span>
+                  </label>
+                  <select
+                    value={createProjSector}
+                    onChange={(e) => setCreateProjSector(e.target.value)}
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent cursor-pointer"
+                  >
+                    <option value="Roads & Drainage">Roads & Drainage</option>
+                    <option value="Water & Sanitation">Water & Sanitation</option>
+                    <option value="Public Facilities">Public Facilities</option>
+                    <option value="Electricity & Energy">Electricity & Energy</option>
+                    <option value="Urban Beautification">Urban Beautification</option>
+                    <option value="Waste Management">Waste Management</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Project Location / Marg <span className="text-[#c4232d]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={createProjLocation}
+                    onChange={(e) => setCreateProjLocation(e.target.value)}
+                    placeholder="e.g. Main Chowk, Ward 04"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Budget Allocation (NPR) <span className="text-[#c4232d]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={createProjBudget}
+                    onChange={(e) => setCreateProjBudget(e.target.value)}
+                    placeholder="e.g. 50,00,000"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm font-mono text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Target Completion Date <span className="text-[#c4232d]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={createProjTargetDate}
+                    onChange={(e) => setCreateProjTargetDate(e.target.value)}
+                    placeholder="e.g. 2082-04-15 (B.S.)"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#333333] mb-1">
+                  Project Description & Specifications <span className="text-[#c4232d]">*</span>
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={createProjDescription}
+                  onChange={(e) => setCreateProjDescription(e.target.value)}
+                  placeholder="Outline the scope of work, technical specifications, and expected civic impact..."
+                  className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] p-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#f0f0f2]">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('projects')}
+                  className="px-5 py-2 rounded-full text-xs font-semibold text-[#555555] bg-[#f5f5f7] hover:bg-[#ebebee] border border-[#e0e0e0] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createProjLoading}
+                  className="inline-flex items-center gap-1.5 px-6 py-2 rounded-full text-xs font-semibold text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  {createProjLoading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating Project...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Create Project</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {/* TAB 3: Appoint Contractor Module */}
+        {activeTab === 'appoint-contractor' && (
+          <section className="bg-white rounded-[18px] p-6 sm:p-8 border border-[#e0e0e0] shadow-sm max-w-2xl mx-auto space-y-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                  Official Assignment
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
+                  Preview ID: {dynamicContractorPreviewId}
+                </span>
+              </div>
+              <h2 className="text-xl font-semibold text-[#1d1d1f] tracking-tight">
+                Appoint & Provision Civic Contractor
+              </h2>
+              <p className="text-xs text-[#7a7a7a] mt-1">
+                Assign a certified contractor to an infrastructure project. The system will create their account and dispatch credentials via Resend.
+              </p>
+            </div>
+
+            {contractorSuccessData && (
+              <div className="p-4 bg-[#f0fbf5] border border-[#d1f2e0] rounded-[14px] text-xs text-[#156947] space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-[#156947]" />
+                  <span>Contractor Successfully Appointed & Provisioned!</span>
+                </div>
+                <div className="space-y-1 text-xs">
+                  <p><strong>Company:</strong> {contractorSuccessData.companyName}</p>
+                  <p><strong>Contractor ID:</strong> <span className="font-mono font-bold">{contractorSuccessData.contractorId}</span></p>
+                  <p><strong>Login Email:</strong> {contractorSuccessData.email}</p>
+                  <p className="text-[11px] text-[#15803d]">
+                    {contractorSuccessData.emailSent
+                      ? '✓ Onboarding email dispatched via Resend (strictly from "Nagar Yojana").'
+                      : 'Credentials updated. Note: verify SMTP or check backend logs if testing locally.'}
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('projects')}
+                    className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#156947] text-white hover:bg-[#0f4f35] transition-colors cursor-pointer"
+                  >
+                    View Assigned Project
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {contractorError && (
+              <div className="p-3.5 bg-[#fff5f5] border border-[#ffd6d6] rounded-[11px] text-xs text-[#c4232d] flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>{contractorError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAppointContractor} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#333333] mb-1">
+                  Contractor / Company Name <span className="text-[#c4232d]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={contractorName}
+                  onChange={(e) => setContractorName(e.target.value)}
+                  placeholder="e.g. Shiva Construction Pvt. Ltd."
+                  className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Contractor Login Email <span className="text-[#c4232d]">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={contractorEmail}
+                    onChange={(e) => setContractorEmail(e.target.value)}
+                    placeholder="contractor@example.com"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#333333] mb-1">
+                    Contact Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={contractorPhone}
+                    onChange={(e) => setContractorPhone(e.target.value)}
+                    placeholder="98XXXXXXXX"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#333333] mb-1">
+                  Assign to Project <span className="text-[#c4232d]">*</span>
+                </label>
+                <select
+                  required
+                  value={contractorProjectId}
+                  onChange={(e) => setContractorProjectId(e.target.value)}
+                  className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] px-3.5 py-2.5 text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#156947] focus:border-transparent cursor-pointer"
+                >
+                  <option value="">-- Select Project in Ward {userProfile?.wardNumber || '04'} --</option>
+                  {wardProjects.map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.title} (Budget: NPR {p.budget} · Current: {p.contractor || 'Unassigned'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="p-3 bg-[#fffbeb] border border-[#fde68a] rounded-[11px] text-xs text-[#92400e] leading-relaxed">
+                <strong>Dynamic Email Dispatch:</strong> Upon appointment, an official credential email will be dispatched to the contractor with sender strictly set to <em>"Nagar Yojana"</em> and subject <em>"Ward {userProfile?.wardNumber || '04'} | {'{Project Title}'} - Contractor Assignment"</em>.
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#f0f0f2]">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('projects')}
+                  className="px-5 py-2 rounded-full text-xs font-semibold text-[#555555] bg-[#f5f5f7] hover:bg-[#ebebee] border border-[#e0e0e0] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={contractorLoading}
+                  className="inline-flex items-center gap-1.5 px-6 py-2 rounded-full text-xs font-semibold text-white bg-[#156947] hover:bg-[#0f4f35] transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  {contractorLoading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Provisioning Contractor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Briefcase className="w-3.5 h-3.5" />
+                      <span>Appoint Contractor</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {/* TAB 4: Appointed Contractors Directory */}
+        {activeTab === 'contractors' && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-[#1d1d1f]">
+                  Appointed Contractors Directory · Ward {userProfile?.wardNumber || '04'}
+                </h2>
+                <p className="text-xs text-[#7a7a7a]">
+                  Manage active contractor credentials and project assignments.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadWardContractors}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#555555] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {wardContractors.length === 0 ? (
+              <div className="p-10 text-center bg-white rounded-[18px] border border-[#e0e0e0] shadow-sm">
+                <Users className="w-10 h-10 text-[#7a7a7a] mx-auto mb-2" />
+                <p className="text-base font-semibold text-[#1d1d1f]">
+                  No contractors currently registered for Ward {userProfile?.wardNumber || '04'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('appoint-contractor')}
+                  className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold text-white bg-[#156947] hover:bg-[#0f4f35] transition-colors cursor-pointer"
+                >
+                  <Briefcase className="w-3.5 h-3.5" />
+                  <span>Appoint New Contractor</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {wardContractors.map((c) => (
+                  <div
+                    key={c.uid}
+                    className="bg-white rounded-[18px] p-5 border border-[#e0e0e0] shadow-sm space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-full bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
+                        {c.contractorId || 'CON-4'}
+                      </span>
+                      <span className="text-[11px] font-semibold text-[#156947] bg-[#f0fdf4] px-2 py-0.5 rounded-full">
+                        Active
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-[#1d1d1f]">
+                        {c.companyName || c.fullName || 'Contractor Company'}
+                      </h4>
+                      <p className="text-xs text-[#7a7a7a] mt-0.5">{c.email}</p>
+                      {c.phone && <p className="text-xs text-[#7a7a7a]">Phone: {c.phone}</p>}
+                    </div>
+
+                    <div className="p-2.5 bg-[#fafafc] rounded-[10px] border border-[#eef0f3] text-xs">
+                      <span className="text-[#7a7a7a] block text-[11px]">Assigned Project:</span>
+                      <strong className="text-[#1d1d1f] line-clamp-1">{c.projectTitle || `Project ID: ${c.projectId}`}</strong>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-[#f0f0f2]">
+                      <button
+                        type="button"
+                        disabled={resendingContractorUid === c.uid}
+                        onClick={() => handleResendContractor(c)}
+                        className="text-xs font-semibold text-[#0066cc] hover:underline cursor-pointer disabled:opacity-50"
+                      >
+                        {resendingContractorUid === c.uid ? 'Resending...' : 'Resend Credentials'}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={revokingContractorUid === c.uid}
+                        onClick={() => handleRevokeContractor(c)}
+                        className="text-xs font-semibold text-[#c4232d] hover:underline cursor-pointer disabled:opacity-50"
+                      >
+                        {revokingContractorUid === c.uid ? 'Revoking...' : 'Revoke'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* TAB 5: Citizen Grievances in Ward */}
         {activeTab === 'grievances' && (
           <section className="space-y-4">
             <div>

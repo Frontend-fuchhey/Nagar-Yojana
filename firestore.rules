@@ -25,6 +25,11 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role == 'WARD_EXEC';
     }
 
+    // Check if the authenticated user is an appointed civic Contractor
+    function isContractor() {
+      return isAuthenticated() && request.auth.token.role == 'CONTRACTOR';
+    }
+
     // Extract the Ward Executive's assigned ward number from token claims
     function getExecWardNumber() {
       return request.auth.token.wardNumber;
@@ -46,17 +51,25 @@ service cloud.firestore {
       );
     }
 
+    // Check if the project is assigned to this Contractor
+    function isProjectContractor(data) {
+      return isContractor() && (
+        data.contractorId == request.auth.uid ||
+        data.contractorEmail == request.auth.token.email
+      );
+    }
+
     // =========================================================================
     // USERS COLLECTION (Staff & Municipal Profiles)
     // =========================================================================
     match /users/{userId} {
       // Super Admin can read all users
       // Users can read their own profile
-      // Ward Executives can view staff profiles for civic coordination
+      // Ward Executives can view staff and contractor profiles for civic coordination
       allow read: if isSuperAdmin() || isSelf(userId) || isWardExec();
 
       // Only Super Admin can create or delete staff profiles
-      // Ward Executives are provisioned by the backend via Firebase Admin SDK
+      // Ward Executives and Contractors are provisioned by the backend via Firebase Admin SDK
       allow create, delete: if isSuperAdmin();
 
       // Super Admin can update any field
@@ -79,11 +92,14 @@ service cloud.firestore {
       allow create: if isSuperAdmin() || (isWardExec() && isWardAuthorized(request.resource.data));
 
       // Modification: Super Admin has full write access.
-      // Ward Executives can update progress, status, milestones, and description for projects in their ward.
+      // Ward Executives can update projects in their ward.
+      // Appointed Contractors can update progress and status on their assigned projects.
       allow update: if isSuperAdmin() || (
         isWardExec() &&
         isWardAuthorized(resource.data) &&
         isWardAuthorized(request.resource.data)
+      ) || (
+        isProjectContractor(resource.data)
       );
 
       // Deletion: Strict Super Admin privilege only
