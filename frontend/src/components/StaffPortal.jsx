@@ -220,7 +220,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           });
         } catch (err) {
           console.error('Error resolving user role:', err);
-          setUserRole('SUPER_ADMIN');
+          setUserRole('WARD_EXEC');
         }
       } else {
         setCurrentUser(null);
@@ -233,8 +233,79 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
     return () => unsubscribe();
   }, [systemActive]);
 
-  // 1c. Real-time Municipal System Maintenance State Observer
+  // Helper: Force immediate eviction of non-Super Admin users when maintenance is active
+  const evictNonSuperAdmin = async (msg) => {
+    try {
+      sessionStorage.removeItem('staff_session_active');
+      localStorage.removeItem('staff_last_active');
+      await signOut(auth);
+    } catch (e) {
+      console.warn('Sign out during eviction notice:', e);
+    } finally {
+      setCurrentUser(null);
+      setUserRole(null);
+      setUserProfile(null);
+      setLoginError(
+        msg ||
+        'Municipal System Maintenance: Your session was closed because the system is currently in a maintenance break. Ward Executive logins are frozen.'
+      );
+    }
+  };
+
+  // 1c. Instant Cross-Tab Storage Sync (0ms eviction if toggled in another tab/window of same browser)
   useEffect(() => {
+    const handleStorageSync = (e) => {
+      if (e.key === 'municipal_system_active' || e.key === 'municipal_system_last_toggle') {
+        const stored = localStorage.getItem('municipal_system_active');
+        if (stored !== null) {
+          const isActive = stored === 'true';
+          setSystemActive(isActive);
+          if (!isActive && currentUser && userRole !== 'SUPER_ADMIN') {
+            evictNonSuperAdmin();
+          }
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+    return () => window.removeEventListener('storage', handleStorageSync);
+  }, [currentUser, userRole]);
+
+  // 1d. Real-Time Municipal System Maintenance State Observer (Heartbeat Polling + Firestore Push)
+  useEffect(() => {
+    const checkSystemStatus = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/system-status?t=${Date.now()}`);
+        if (res.ok) {
+          const data = await res.json();
+          const isActive = Boolean(data.systemActive);
+          setSystemActive(isActive);
+          localStorage.setItem('municipal_system_active', String(isActive));
+          if (!isActive && currentUser && userRole && userRole !== 'SUPER_ADMIN') {
+            evictNonSuperAdmin();
+          }
+        }
+      } catch (err) {
+        // network catch
+      }
+    };
+
+    // Check immediately on mount
+    checkSystemStatus();
+
+    // Fast active heartbeat: checks every 3 seconds if logged in, 6 seconds on login page
+    const intervalId = setInterval(checkSystemStatus, currentUser ? 3000 : 6000);
+
+    // Immediate check on tab focus or visibility change (instant when switching back to executive tab)
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkSystemStatus();
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    // Also attach Firestore onSnapshot for real-time push
     const unsub = onSnapshot(
       doc(db, 'systemSettings', 'maintenance'),
       (snap) => {
@@ -242,38 +313,29 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           const data = snap.data();
           const isActive = data.systemActive !== undefined ? Boolean(data.systemActive) : !data.maintenanceMode;
           setSystemActive(isActive);
-        } else {
-          setSystemActive(true);
+          localStorage.setItem('municipal_system_active', String(isActive));
+          if (!isActive && currentUser && userRole && userRole !== 'SUPER_ADMIN') {
+            evictNonSuperAdmin();
+          }
         }
       },
-      (err) => {
-        console.warn('System settings listener fallback:', err.message);
-        fetch(`${API_BASE}/api/auth/system-status`)
-          .then((r) => r.json())
-          .then((d) => {
-            if (typeof d.systemActive === 'boolean') {
-              setSystemActive(d.systemActive);
-            }
-          })
-          .catch(() => {});
+      () => {
+        // fallback to polling
       }
     );
 
-    return () => unsub();
-  }, []);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      unsub();
+    };
+  }, [currentUser, userRole]);
 
-  // 1d. Auto-evict non-Super Admin users if system maintenance is activated while they are logged in
+  // 1e. Auto-evict non-Super Admin users immediately whenever systemActive becomes false
   useEffect(() => {
     if (!systemActive && currentUser && userRole && userRole !== 'SUPER_ADMIN') {
-      sessionStorage.removeItem('staff_session_active');
-      localStorage.removeItem('staff_last_active');
-      signOut(auth).catch(() => {});
-      setCurrentUser(null);
-      setUserRole(null);
-      setUserProfile(null);
-      setLoginError(
-        'Municipal System Maintenance: Your session was paused because the system has been put into a maintenance break by the Super Admin.'
-      );
+      evictNonSuperAdmin();
     }
   }, [systemActive, currentUser, userRole]);
 
@@ -742,6 +804,8 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
       }
 
       setSystemActive(nextState);
+      localStorage.setItem('municipal_system_active', String(nextState));
+      localStorage.setItem('municipal_system_last_toggle', String(Date.now()));
       setMaintenanceModalOpen(false);
       setActionFeedback({
         type: 'success',
@@ -2223,6 +2287,33 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // If system is in maintenance break, non-Super Admins are completely blocked from viewing workspace
+  if (!systemActive && userRole !== 'SUPER_ADMIN') {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center selection:bg-[#0066cc] selection:text-white">
+        <div className="max-w-md w-full bg-white rounded-[22px] p-8 border border-[#e0e0e0] shadow-[0_4px_30px_rgba(0,0,0,0.06)] flex flex-col items-center">
+          <div className="w-14 h-14 rounded-2xl bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6] flex items-center justify-center mb-4">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <h2 className="text-xl font-semibold text-[#1d1d1f] tracking-tight">
+            Municipal Maintenance Break Active
+          </h2>
+          <p className="text-xs text-[#7a7a7a] mt-2 mb-6 leading-relaxed">
+            The municipal command system has been put into a maintenance break by the Super Admin. Ward Executive workspace operations are currently frozen.
+          </p>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-semibold text-white bg-[#0066cc] hover:bg-[#0071e3] transition-colors cursor-pointer shadow-sm"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Return to Staff Login Gateway</span>
+          </button>
+        </div>
       </div>
     );
   }

@@ -147,6 +147,11 @@ router.post("/clear-failures", rateLimit, verifyToken, async (req, res) => {
  */
 router.get("/system-status", async (req, res) => {
   try {
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
     const snap = await adminDb.collection("systemSettings").doc("maintenance").get();
     if (!snap.exists) {
       return res.json({ systemActive: true, maintenanceMode: false });
