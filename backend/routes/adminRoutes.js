@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const { admin, adminAuth, adminDb } = require("../firebaseAdmin");
 const { verifyToken, requireSuperAdmin, requireWardExec } = require("../middleware/authMiddleware");
 const { sendWardExecCredentials } = require("../services/emailService");
+const { generateTemporaryPassword } = require("../utils/passwordHelper");
 
 const router = express.Router();
 
@@ -63,28 +64,8 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
     const seqNumber = existingExecsSnap.size + 1;
     const executiveId = `WE-${ward}-${seqNumber}`;
 
-    // 3. Generate secure random 12-character temporary password (mixed uppercase, lowercase, numbers, symbols)
-    const upperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    const lowerChars = "abcdefghijkmnopqrstuvwxyz";
-    const digitChars = "23456789";
-    const symbolChars = "!@#$%&*";
-    const allChars = upperChars + lowerChars + digitChars + symbolChars;
-
-    const pwdChars = [
-      upperChars[crypto.randomInt(0, upperChars.length)],
-      lowerChars[crypto.randomInt(0, lowerChars.length)],
-      digitChars[crypto.randomInt(0, digitChars.length)],
-      symbolChars[crypto.randomInt(0, symbolChars.length)],
-    ];
-    for (let i = 4; i < 12; i++) {
-      pwdChars.push(allChars[crypto.randomInt(0, allChars.length)]);
-    }
-    // Fisher-Yates shuffle
-    for (let i = pwdChars.length - 1; i > 0; i--) {
-      const j = crypto.randomInt(0, i + 1);
-      [pwdChars[i], pwdChars[j]] = [pwdChars[j], pwdChars[i]];
-    }
-    const tempPassword = pwdChars.join("");
+    // 3. Generate secure, copy-friendly temporary password
+    const tempPassword = generateTemporaryPassword(10);
 
     // 4. Create user in Firebase Auth
     let userRecord;
@@ -140,6 +121,11 @@ router.post("/provision-ward-exec", verifyToken, requireSuperAdmin, async (req, 
       }
       throw saveError;
     }
+
+    // Clear any prior lockout record for this email
+    try {
+      await adminDb.collection("loginLockouts").doc(cleanEmail).delete();
+    } catch (lErr) {}
 
     // 7. Dispatch onboarding credentials email
     let emailDispatched = true;
@@ -392,27 +378,8 @@ router.post("/ward-exec/:uid/resend", verifyToken, requireSuperAdmin, async (req
 
     const data = userSnap.data();
 
-    // Generate new 12-char secure temporary password
-    const upperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    const lowerChars = "abcdefghijkmnopqrstuvwxyz";
-    const digitChars = "23456789";
-    const symbolChars = "!@#$%&*";
-    const allChars = upperChars + lowerChars + digitChars + symbolChars;
-
-    const pwdChars = [
-      upperChars[crypto.randomInt(0, upperChars.length)],
-      lowerChars[crypto.randomInt(0, lowerChars.length)],
-      digitChars[crypto.randomInt(0, digitChars.length)],
-      symbolChars[crypto.randomInt(0, symbolChars.length)],
-    ];
-    for (let i = 4; i < 12; i++) {
-      pwdChars.push(allChars[crypto.randomInt(0, allChars.length)]);
-    }
-    for (let i = pwdChars.length - 1; i > 0; i--) {
-      const j = crypto.randomInt(0, i + 1);
-      [pwdChars[i], pwdChars[j]] = [pwdChars[j], pwdChars[i]];
-    }
-    const tempPassword = pwdChars.join("");
+    // Generate new secure, copy-friendly temporary password
+    const tempPassword = generateTemporaryPassword(10);
 
     // Update password in Firebase Auth
     await adminAuth.updateUser(uid, { password: tempPassword });
@@ -422,6 +389,13 @@ router.post("/ward-exec/:uid/resend", verifyToken, requireSuperAdmin, async (req
       mustChangePassword: true,
       lastPasswordResetAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Clear any lockout record for this email so login succeeds immediately
+    if (data.email) {
+      try {
+        await adminDb.collection("loginLockouts").doc(data.email.toLowerCase().trim()).delete();
+      } catch (lErr) {}
+    }
 
     // Send email
     let emailSent = true;

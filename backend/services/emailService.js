@@ -55,8 +55,16 @@ const sendWardExecCredentials = async ({ name, fullName, email, wardNumber, temp
                         <td><a href="mailto:${email}" style="color: #2563eb; text-decoration: none; font-weight: 500;">${email}</a></td>
                     </tr>
                     <tr>
-                        <td style="color: #4b5563; font-weight: 500;">Temporary Password:</td>
-                        <td style="font-family: monospace; font-size: 15px; font-weight: 700; color: #111827; letter-spacing: 1px;">${tempPassword}</td>
+                        <td style="color: #4b5563; font-weight: 500; vertical-align: top; padding-top: 8px;">Temporary Password:</td>
+                        <td>
+                            <div style="background-color: #f8fafc; border: 1.5px dashed #2563eb; border-radius: 6px; padding: 10px 14px; display: inline-block;">
+                                <div style="font-family: ui-monospace, 'SF Mono', Consolas, Monaco, monospace; font-size: 18px; font-weight: 700; color: #1e3a8a; letter-spacing: 2px; user-select: all; -webkit-user-select: all;">${tempPassword}</div>
+                                <div style="margin-top: 6px;">
+                                    <span style="display: inline-block; background-color: #e0e7ff; color: #3730a3; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; user-select: all; -webkit-user-select: all;">📋 Select & Copy Password</span>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Double-click or tap the box to select & copy without spaces.</div>
+                        </td>
                     </tr>
                 </table>
             </div>
@@ -68,7 +76,7 @@ const sendWardExecCredentials = async ({ name, fullName, email, wardNumber, temp
 
             <!-- Call to Action -->
             <div style="text-align: center;">
-                <a href="${portalUrl}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; transition: background-color 0.2s;">Access Staff & Executive Portal</a>
+                <a href="${portalUrl}&email=${encodeURIComponent(email)}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; transition: background-color 0.2s;">Access Staff & Executive Portal</a>
             </div>
         </div>
     </div>
@@ -145,8 +153,16 @@ const sendContractorCredentials = async ({ name, companyName, email, wardNumber,
                         <td><a href="mailto:${email}" style="color: #2563eb; text-decoration: none; font-weight: 500;">${email}</a></td>
                     </tr>
                     <tr>
-                        <td style="color: #4b5563; font-weight: 500;">Temporary Password:</td>
-                        <td style="font-family: monospace; font-size: 15px; font-weight: 700; color: #111827; letter-spacing: 1px;">${tempPassword}</td>
+                        <td style="color: #4b5563; font-weight: 500; vertical-align: top; padding-top: 8px;">Temporary Password:</td>
+                        <td>
+                            <div style="background-color: #f8fafc; border: 1.5px dashed #15803d; border-radius: 6px; padding: 10px 14px; display: inline-block;">
+                                <div style="font-family: ui-monospace, 'SF Mono', Consolas, Monaco, monospace; font-size: 18px; font-weight: 700; color: #14532d; letter-spacing: 2px; user-select: all; -webkit-user-select: all;">${tempPassword}</div>
+                                <div style="margin-top: 6px;">
+                                    <span style="display: inline-block; background-color: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; user-select: all; -webkit-user-select: all;">📋 Select & Copy Password</span>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Double-click or tap the box to select & copy without spaces.</div>
+                        </td>
                     </tr>
                 </table>
             </div>
@@ -158,7 +174,7 @@ const sendContractorCredentials = async ({ name, companyName, email, wardNumber,
 
             <!-- Call to Action -->
             <div style="text-align: center;">
-                <a href="${portalUrl}" style="display: inline-block; background-color: #156947; color: #ffffff; padding: 14px 34px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; transition: background-color 0.2s;">Contractor Portal Login</a>
+                <a href="${portalUrl}&email=${encodeURIComponent(email)}" style="display: inline-block; background-color: #156947; color: #ffffff; padding: 14px 34px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; transition: background-color 0.2s;">Contractor Portal Login</a>
             </div>
         </div>
     </div>

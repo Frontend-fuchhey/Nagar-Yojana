@@ -85,16 +85,14 @@ export default function App() {
   const [activeSector, setActiveSector] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Helper to parse current portal from URL (?portal=staff | executive | contractor)
+  // Helper to parse current portal from URL (?portal=staff | executive | contractor | login)
   const getPortalFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
     const p = params.get('portal');
-    if (p === 'staff' || p === 'executive' || p === 'contractor') {
-      return p;
-    }
+    if (!p) return null;
     if (p === 'admin') return 'staff';
     if (p === 'exec' || p === 'ward') return 'executive';
-    return null;
+    return p;
   };
 
   // Portal View & Modal States

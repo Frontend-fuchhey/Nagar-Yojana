@@ -43,6 +43,8 @@ import {
   X,
   Briefcase,
   Plus,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { API_BASE_URL } from '../apiConfig';
@@ -55,8 +57,16 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
   const [userRole, setUserRole] = useState(null); // 'SUPER_ADMIN' | 'WARD_EXEC' | 'CONTRACTOR'
   const [userProfile, setUserProfile] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginEmail, setLoginEmail] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get('email');
+      return p ? p.trim() : '';
+    } catch {
+      return '';
+    }
+  });
   const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [lockInfo, setLockInfo] = useState(null); // { email, until } when an email is locked
@@ -786,9 +796,42 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         console.warn('Lockout status check unavailable:', statusErr.message);
       }
 
-      // 2. Enforce session persistence (Option A) and attempt sign-in
+      // 2. Enforce session persistence (Option A) and attempt sign-in with clean sanitized password
       await setPersistence(auth, browserSessionPersistence);
-      const cred = await signInWithEmailAndPassword(auth, email, loginPassword);
+      const cleanPassword = (loginPassword || '')
+        .trim()
+        .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '');
+      const cred = await signInWithEmailAndPassword(auth, email, cleanPassword);
+
+      // Resolve role immediately from token claims & Firestore profile
+      const tokenResult = await cred.user.getIdTokenResult(true);
+      let detectedRole = tokenResult.claims?.role;
+      let profileData = {};
+      try {
+        const userDocSnap = await getDoc(doc(db, 'users', cred.user.uid));
+        if (userDocSnap.exists()) {
+          profileData = userDocSnap.data();
+          if (!detectedRole && profileData.role) {
+            detectedRole = profileData.role;
+          }
+        }
+      } catch (docErr) {
+        console.warn('Could not read user doc on sign in:', docErr.message);
+      }
+
+      if (detectedRole === 'SUPER_ADMIN' || profileData.role === 'SUPER_ADMIN') {
+        detectedRole = 'SUPER_ADMIN';
+      } else if (
+        detectedRole === 'CONTRACTOR' ||
+        profileData.role === 'CONTRACTOR' ||
+        profileData.contractorId
+      ) {
+        detectedRole = 'CONTRACTOR';
+      } else if (profileData.wardNumber || tokenResult.claims?.wardNumber) {
+        detectedRole = 'WARD_EXEC';
+      }
+
+      const resolvedRole = detectedRole || profileData.role || 'WARD_EXEC';
 
       // 2b. Check if system maintenance break is active (freezes all except SUPER_ADMIN)
       let isSystemPaused = !systemActive;
@@ -800,24 +843,28 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         }
       } catch (e) {}
 
-      if (isSystemPaused) {
-        const tokenResult = await cred.user.getIdTokenResult(true);
-        const userDocSnap = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
-        const role = tokenResult.claims?.role || userDocSnap?.data()?.role;
-        if (role !== 'SUPER_ADMIN') {
-          sessionStorage.removeItem('staff_session_active');
-          localStorage.removeItem('staff_last_active');
-          await signOut(auth);
-          setLoginError(
-            'Municipal System Maintenance: Staff and Ward Executive logins are temporarily frozen for maintenance. Only the Chief Municipal Administrator (Super Admin) can access the system at this time.'
-          );
-          return;
-        }
+      if (isSystemPaused && resolvedRole !== 'SUPER_ADMIN') {
+        sessionStorage.removeItem('staff_session_active');
+        localStorage.removeItem('staff_last_active');
+        await signOut(auth);
+        setLoginError(
+          'Municipal System Maintenance: Staff, Ward Executive, and Contractor logins are temporarily frozen for maintenance. Only the Chief Municipal Administrator (Super Admin) can access the system at this time.'
+        );
+        return;
       }
 
       // Mark session as actively authorized in this browser session
       sessionStorage.setItem('staff_session_active', '1');
       localStorage.setItem('staff_last_active', String(Date.now()));
+
+      // Automatically route to designated portal based on credentials
+      if (resolvedRole === 'SUPER_ADMIN') {
+        onPortalChange?.('staff');
+      } else if (resolvedRole === 'CONTRACTOR') {
+        onPortalChange?.('contractor');
+      } else {
+        onPortalChange?.('executive');
+      }
 
       // 3. Success: reset the failure counter
       try {
@@ -1396,11 +1443,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               />
               <div className="flex justify-center mb-2">
                 <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
-                  {portalType === 'contractor'
-                    ? 'Civic Contractor Gateway'
-                    : portalType === 'executive'
-                    ? 'Ward Executive Gateway'
-                    : 'Super Admin Command Gateway'}
+                  Official Municipal Gateway · विराटनगर महानगरपालिका
                 </span>
               </div>
               <h1 className="text-[26px] font-semibold tracking-tight flex items-center justify-center gap-1.5">
@@ -1408,11 +1451,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 <span className="text-[#156947]">योजना</span>
               </h1>
               <p className="text-sm font-medium text-[#1d1d1f] mt-1.5">
-                {portalType === 'contractor'
-                  ? 'Contractor Project Execution Workspace'
-                  : portalType === 'executive'
-                  ? 'Ward Executive Workspace'
-                  : 'Municipal Administration · Super Admin'}
+                Municipal Administration & Partner Portal
               </p>
               <p className="text-xs text-[#7a7a7a] mt-0.5">
                 Biratnagar Metropolitan City · विराटनगर महानगरपालिका
@@ -1463,11 +1502,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             <form onSubmit={handleSignIn} className="space-y-4">
               <div>
                 <label htmlFor="staff-email" className="block text-xs font-semibold text-[#333333] mb-1.5">
-                  {portalType === 'contractor'
-                    ? 'Contractor Login Email'
-                    : portalType === 'executive'
-                    ? 'Official Ward Executive Email'
-                    : 'Chief Municipal Administrator Email'}
+                  Official Email Address
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1480,7 +1515,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                     onChange={(e) => setLoginEmail(e.target.value)}
                     onBlur={handleEmailBlur}
                     disabled={loginSubmitting || isLoginLocked}
-                    placeholder="name@shrawankarki.com.np"
+                    placeholder="name@biratnagar.gov.np or registered email"
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
@@ -1494,15 +1529,23 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                   <Lock className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     id="staff-password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
                     autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     disabled={loginSubmitting || isLoginLocked}
                     placeholder="••••••••••••"
-                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-10 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed font-sans"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#7a7a7a] hover:text-[#1d1d1f] focus:outline-none cursor-pointer"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -1519,52 +1562,14 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    <span>
-                      {portalType === 'contractor'
-                        ? 'Sign In to Contractor Portal'
-                        : portalType === 'executive'
-                        ? 'Sign In to Executive Workspace'
-                        : 'Sign In to Super Admin'}
-                    </span>
+                    <span>Sign In to Municipal Portal</span>
                   </>
                 )}
               </button>
             </form>
 
-            {/* Portal Switcher & Public Return */}
+            {/* Public Return */}
             <div className="mt-6 pt-5 border-t border-[#f0f0f0] space-y-3 text-center">
-              <div className="flex items-center justify-center gap-2 flex-wrap text-xs text-[#7a7a7a]">
-                <span>Switch Portal:</span>
-                <button
-                  type="button"
-                  onClick={() => onPortalChange?.('staff')}
-                  className={`font-semibold hover:underline cursor-pointer ${
-                    portalType === 'staff' ? 'text-[#0066cc]' : 'text-[#555555]'
-                  }`}
-                >
-                  Super Admin
-                </button>
-                <span>·</span>
-                <button
-                  type="button"
-                  onClick={() => onPortalChange?.('executive')}
-                  className={`font-semibold hover:underline cursor-pointer ${
-                    portalType === 'executive' ? 'text-[#0066cc]' : 'text-[#555555]'
-                  }`}
-                >
-                  Ward Executive
-                </button>
-                <span>·</span>
-                <button
-                  type="button"
-                  onClick={() => onPortalChange?.('contractor')}
-                  className={`font-semibold hover:underline cursor-pointer ${
-                    portalType === 'contractor' ? 'text-[#0066cc]' : 'text-[#555555]'
-                  }`}
-                >
-                  Contractor
-                </button>
-              </div>
 
               <div>
                 <button

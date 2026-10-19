@@ -8,6 +8,7 @@ const {
   requireWardExecOrContractor,
 } = require("../middleware/authMiddleware");
 const { sendContractorCredentials } = require("../services/emailService");
+const { generateTemporaryPassword } = require("../utils/passwordHelper");
 
 const router = express.Router();
 
@@ -136,27 +137,8 @@ router.post("/provision-contractor", verifyToken, requireWardExec, async (req, r
     const seqNumber = existingContractorsSnap.size + 1;
     const contractorId = `CON-${wardNumber}-${seqNumber}`;
 
-    // 4. Generate secure random 12-char temporary password
-    const upperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    const lowerChars = "abcdefghijkmnopqrstuvwxyz";
-    const digitChars = "23456789";
-    const symbolChars = "!@#$%&*";
-    const allChars = upperChars + lowerChars + digitChars + symbolChars;
-
-    const pwdChars = [
-      upperChars[crypto.randomInt(0, upperChars.length)],
-      lowerChars[crypto.randomInt(0, lowerChars.length)],
-      digitChars[crypto.randomInt(0, digitChars.length)],
-      symbolChars[crypto.randomInt(0, symbolChars.length)],
-    ];
-    for (let i = 4; i < 12; i++) {
-      pwdChars.push(allChars[crypto.randomInt(0, allChars.length)]);
-    }
-    for (let i = pwdChars.length - 1; i > 0; i--) {
-      const j = crypto.randomInt(0, i + 1);
-      [pwdChars[i], pwdChars[j]] = [pwdChars[j], pwdChars[i]];
-    }
-    const tempPassword = pwdChars.join("");
+    // 4. Generate secure, copy-friendly temporary password
+    const tempPassword = generateTemporaryPassword(10);
 
     // 5. Create user in Firebase Auth
     let userRecord;
@@ -214,6 +196,11 @@ router.post("/provision-contractor", verifyToken, requireWardExec, async (req, r
         },
         { merge: true }
       );
+
+      // Clear any prior lockout record for this email
+      try {
+        await adminDb.collection("loginLockouts").doc(cleanEmail).delete();
+      } catch (lErr) {}
     } catch (err) {
       // Rollback auth user if database writes fail
       try {
@@ -298,33 +285,21 @@ router.post("/contractor/:uid/resend", verifyToken, requireWardExec, async (req,
       return res.status(403).json({ error: "Cannot manage contractors outside your ward." });
     }
 
-    // Generate new temporary password
-    const upperChars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    const lowerChars = "abcdefghijkmnopqrstuvwxyz";
-    const digitChars = "23456789";
-    const symbolChars = "!@#$%&*";
-    const allChars = upperChars + lowerChars + digitChars + symbolChars;
-
-    const pwdChars = [
-      upperChars[crypto.randomInt(0, upperChars.length)],
-      lowerChars[crypto.randomInt(0, lowerChars.length)],
-      digitChars[crypto.randomInt(0, digitChars.length)],
-      symbolChars[crypto.randomInt(0, symbolChars.length)],
-    ];
-    for (let i = 4; i < 12; i++) {
-      pwdChars.push(allChars[crypto.randomInt(0, allChars.length)]);
-    }
-    for (let i = pwdChars.length - 1; i > 0; i--) {
-      const j = crypto.randomInt(0, i + 1);
-      [pwdChars[i], pwdChars[j]] = [pwdChars[j], pwdChars[i]];
-    }
-    const tempPassword = pwdChars.join("");
+    // Generate new secure, copy-friendly temporary password
+    const tempPassword = generateTemporaryPassword(10);
 
     await adminAuth.updateUser(uid, { password: tempPassword });
     await userDocRef.update({
       mustChangePassword: true,
       lastPasswordResetAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Clear any lockout record for this email so login succeeds immediately
+    if (data.email) {
+      try {
+        await adminDb.collection("loginLockouts").doc(data.email.toLowerCase().trim()).delete();
+      } catch (lErr) {}
+    }
 
     let emailSent = true;
     try {
