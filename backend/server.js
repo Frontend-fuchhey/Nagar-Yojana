@@ -250,6 +250,11 @@ app.patch("/api/grievances/:id/status", verifyToken, requireWardExec, (req, res)
 app.use("/api/admin", adminRoutes);
 app.use("/api/auth", authRoutes);
 
+// Root health check route for UptimeRobot / monitoring
+app.get("/", (req, res) => {
+  res.status(200).send("NagarYojana API is awake and running!");
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "Nagarयोजना API (Biratnagar)" });
@@ -268,8 +273,4 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Nagarयोजना Backend API running on http://localhost:${PORT}`);
-});
-
-app.get("/", (req, res) => {
-  res.status(200).send("NagarYojana API is awake and running!");
 });
