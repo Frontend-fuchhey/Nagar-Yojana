@@ -34,14 +34,32 @@ async function verifyToken(req, res, next) {
 
 /**
  * Middleware to restrict route access strictly to SUPER_ADMIN users.
+ * Checks token custom claims, with automatic fallback and self-healing to Firestore user profile.
  */
-function requireSuperAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "SUPER_ADMIN") {
-    return res.status(403).json({
-      error: "Forbidden: Super Admin privileges required to access this resource."
-    });
+async function requireSuperAdmin(req, res, next) {
+  if (req.user && req.user.role === "SUPER_ADMIN") {
+    return next();
   }
-  next();
+
+  // Fallback: check Firestore users collection if token claims have not propagated yet
+  try {
+    const { adminDb, adminAuth } = require("../firebaseAdmin");
+    if (req.user && req.user.uid) {
+      const userDoc = await adminDb.collection("users").doc(req.user.uid).get();
+      if (userDoc.exists && userDoc.data().role === "SUPER_ADMIN") {
+        req.user.role = "SUPER_ADMIN";
+        // Self-heal: set custom user claims on Firebase Auth
+        adminAuth.setCustomUserClaims(req.user.uid, { role: "SUPER_ADMIN" }).catch(() => {});
+        return next();
+      }
+    }
+  } catch (err) {
+    console.warn("[AuthMiddleware] requireSuperAdmin fallback check error:", err.message);
+  }
+
+  return res.status(403).json({
+    error: "Forbidden: Super Admin privileges required to access this resource."
+  });
 }
 
 /**

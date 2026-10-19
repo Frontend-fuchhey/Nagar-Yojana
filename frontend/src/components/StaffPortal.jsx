@@ -40,6 +40,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Send,
+  X,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { API_BASE_URL } from '../apiConfig';
@@ -62,6 +63,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Municipal Maintenance State (when false, Ward Executive & staff logins are frozen; only Super Admin can log in)
   const [systemActive, setSystemActive] = useState(true);
   const [systemToggling, setSystemToggling] = useState(false);
+  const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
 
   // Security Policy: 15 minutes of user inactivity triggers auto-logout
   const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -700,41 +702,47 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   };
 
   // Handler: Toggle Municipal System Active / Maintenance Break
-  const handleToggleSystemStatus = async () => {
-    const nextState = !systemActive;
-    const confirmPrompt = nextState
-      ? 'Resume Municipal System? This will restore login access for all Ward Executives and staff.'
-      : 'Activate Maintenance Break? This will immediately freeze logins for all Ward Executives and staff. Only the Super Admin will be able to access the system.';
-
-    if (!window.confirm(confirmPrompt)) return;
+  const handleToggleSystemStatus = async (targetActiveState) => {
+    const nextState = targetActiveState !== undefined ? targetActiveState : !systemActive;
 
     setSystemToggling(true);
     setActionFeedback(null);
     try {
-      // 1. Update Firestore directly for real-time propagation
-      await setDoc(
-        doc(db, 'systemSettings', 'maintenance'),
-        {
-          systemActive: nextState,
-          maintenanceMode: !nextState,
-          updatedAt: new Date().toISOString(),
-          updatedBy: currentUser?.email || 'SUPER_ADMIN',
-        },
-        { merge: true }
-      );
-
-      // 2. Also notify backend REST endpoint
+      // 1. Primary Authority: Backend REST API using Firebase Admin SDK (avoids client-side permission issues)
       const token = currentUser ? await currentUser.getIdToken() : '';
-      await fetch(`${API_BASE}/api/admin/toggle-system-status`, {
+      const res = await fetch(`${API_BASE}/api/admin/toggle-system-status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ systemActive: nextState }),
-      }).catch((e) => console.warn('Backend toggle endpoint fallback notice:', e.message));
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update system status on backend.');
+      }
+
+      // 2. Secondary: Best-effort local client Firestore sync
+      try {
+        await setDoc(
+          doc(db, 'systemSettings', 'maintenance'),
+          {
+            systemActive: nextState,
+            maintenanceMode: !nextState,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUser?.email || 'SUPER_ADMIN',
+          },
+          { merge: true }
+        );
+      } catch (clientErr) {
+        // Backend Admin SDK already wrote to Firestore and triggers onSnapshot across all clients
+        console.warn('Client Firestore direct write skipped (backend Admin SDK updated Firestore successfully):', clientErr.message);
+      }
 
       setSystemActive(nextState);
+      setMaintenanceModalOpen(false);
       setActionFeedback({
         type: 'success',
         message: nextState
@@ -1237,33 +1245,32 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleToggleSystemStatus}
+                onClick={() => setMaintenanceModalOpen(true)}
                 disabled={systemToggling}
                 title={
                   systemActive
-                    ? 'Municipal System Active. Click to turn OFF (freeze Ward Executive logins for maintenance).'
-                    : 'Maintenance Break Active (Logins Frozen). Click to turn ON (resume normal logins).'
+                    ? 'System Active. Click to open Maintenance Break options.'
+                    : 'Maintenance Break Active (Logins Frozen). Click to resume normal system operations.'
                 }
-                className={`inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all cursor-pointer ${
+                className={`inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
                   systemActive
-                    ? 'bg-white hover:bg-[#f5f5f7] border-[#e0e0e0] text-[#1d1d1f] shadow-xs'
-                    : 'bg-[#fff5f5] hover:bg-[#ffe9e9] border-[#ffd6d6] text-[#c4232d] shadow-xs'
+                    ? 'bg-white hover:bg-[#f5f5f7] border-[#e0e0e0] shadow-xs'
+                    : 'bg-[#fff5f5] hover:bg-[#ffe9e9] border-[#ffd6d6] shadow-xs'
                 } ${systemToggling ? 'opacity-60 cursor-wait' : ''}`}
-                aria-pressed={systemActive}
+                aria-pressed={!systemActive}
               >
                 <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    systemActive ? 'bg-[#156947] animate-pulse' : 'bg-[#c4232d]'
+                  className={`select-none font-semibold transition-colors duration-200 ${
+                    systemActive ? 'text-[#156947]' : 'text-[#c4232d]'
                   }`}
-                />
-                <span className="select-none font-medium">
-                  {systemActive ? 'Municipal System Active' : 'Maintenance Break (Frozen)'}
+                >
+                  Maintenance Break
                 </span>
 
                 {/* Sliding toggle switch */}
                 <span
                   className={`relative inline-flex h-4 w-7 flex-shrink-0 rounded-full border border-transparent transition-colors duration-200 ease-in-out ${
-                    systemActive ? 'bg-[#156947]' : 'bg-[#cbd5e1]'
+                    systemActive ? 'bg-[#156947]' : 'bg-[#c4232d]'
                   }`}
                   aria-hidden="true"
                 >
@@ -2092,6 +2099,130 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
             </div>
           )}
         </main>
+
+        {/* Interactive In-System Maintenance Confirmation Modal */}
+        {maintenanceModalOpen && (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+            onClick={() => {
+              if (!systemToggling) setMaintenanceModalOpen(false);
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="maintenance-modal-title"
+          >
+            <div
+              className="bg-white rounded-[22px] max-w-md w-full p-6 sm:p-7 border border-[#e0e0e0] shadow-[0_20px_50px_rgba(0,0,0,0.15)] relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setMaintenanceModalOpen(false)}
+                disabled={systemToggling}
+                aria-label="Close dialog"
+                className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-[#7a7a7a] hover:text-[#1d1d1f] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* Icon & Heading */}
+              <div className="flex items-center gap-3.5 mb-3">
+                <div
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 ${
+                    systemActive
+                      ? 'bg-[#fff5f5] text-[#c4232d] border border-[#ffd6d6]'
+                      : 'bg-[#eefaf3] text-[#156947] border border-[#cfeedd]'
+                  }`}
+                >
+                  {systemActive ? (
+                    <AlertTriangle className="w-5 h-5" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <h3
+                    id="maintenance-modal-title"
+                    className="text-lg font-semibold tracking-tight text-[#1d1d1f]"
+                  >
+                    {systemActive ? 'Activate Maintenance Break?' : 'Resume Municipal System?'}
+                  </h3>
+                  <p className="text-xs text-[#7a7a7a]">
+                    Biratnagar Metropolitan City · Administrative Gateway
+                  </p>
+                </div>
+              </div>
+
+              {/* Description Body */}
+              <div className="space-y-3.5 my-5 text-sm text-[#555555] leading-relaxed">
+                <p>
+                  {systemActive
+                    ? 'Activating a maintenance break will temporarily freeze login access for all Ward Executives and staff members across all 19 wards.'
+                    : 'Resuming the municipal system will restore full login access for all authorized Ward Executives and municipal staff members.'}
+                </p>
+
+                <div
+                  className={`p-3.5 rounded-[12px] text-xs leading-relaxed border ${
+                    systemActive
+                      ? 'bg-[#fff8f8] border-[#ffe0e0] text-[#a81c24]'
+                      : 'bg-[#f0fbf5] border-[#d1f2e0] text-[#156947]'
+                  }`}
+                >
+                  {systemActive ? (
+                    <div className="flex items-start gap-2">
+                      <Lock className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#c4232d]" />
+                      <span>
+                        <strong>Super Admin only:</strong> Only Chief Municipal Administrator credentials will be able to log in or access internal tools until maintenance is turned off.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#156947]" />
+                      <span>
+                        <strong>Normal operations:</strong> Ward Executives will be able to update infrastructure progress and respond to grievances across all wards immediately.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#f0f0f2]">
+                <button
+                  type="button"
+                  onClick={() => setMaintenanceModalOpen(false)}
+                  disabled={systemToggling}
+                  className="px-4 py-2 rounded-full text-xs font-semibold text-[#555555] hover:text-[#1d1d1f] bg-[#f5f5f7] hover:bg-[#ebebee] border border-[#e0e0e0] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleToggleSystemStatus(!systemActive)}
+                  disabled={systemToggling}
+                  className={`inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-semibold text-white transition-all shadow-sm cursor-pointer disabled:opacity-60 ${
+                    systemActive
+                      ? 'bg-[#c4232d] hover:bg-[#a81c24]'
+                      : 'bg-[#156947] hover:bg-[#0f4f35]'
+                  }`}
+                >
+                  {systemToggling ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Updating System...</span>
+                    </>
+                  ) : systemActive ? (
+                    <span>Activate Maintenance</span>
+                  ) : (
+                    <span>Resume Operations</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
