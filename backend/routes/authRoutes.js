@@ -141,4 +141,23 @@ router.post("/clear-failures", rateLimit, verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/system-status
+ * Returns current municipal system status (systemActive / maintenanceMode).
+ */
+router.get("/system-status", async (req, res) => {
+  try {
+    const snap = await adminDb.collection("systemSettings").doc("maintenance").get();
+    if (!snap.exists) {
+      return res.json({ systemActive: true, maintenanceMode: false });
+    }
+    const data = snap.data();
+    const isActive = data.systemActive !== undefined ? Boolean(data.systemActive) : !data.maintenanceMode;
+    return res.json({ systemActive: isActive, maintenanceMode: !isActive });
+  } catch (err) {
+    console.warn("[auth] system-status check fallback:", err.message);
+    return res.json({ systemActive: true, maintenanceMode: false });
+  }
+});
+
 module.exports = router;

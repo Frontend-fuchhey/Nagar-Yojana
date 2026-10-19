@@ -123,6 +123,16 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // SYSTEM SETTINGS & MAINTENANCE (Maintenance Mode Toggle)
+    // =========================================================================
+    match /systemSettings/{settingId} {
+      // Anyone can read system maintenance status to display notices & enforce login freezes
+      allow read: if true;
+      // Only Super Admin can toggle or alter system settings
+      allow write: if isSuperAdmin();
+    }
+
+    // =========================================================================
     // LOGIN LOCKOUTS (managed exclusively by the backend via Admin SDK)
     // =========================================================================
     match /loginLockouts/{email} {

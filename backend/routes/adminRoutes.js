@@ -454,4 +454,39 @@ router.post("/ward-exec/:uid/resend", verifyToken, requireSuperAdmin, async (req
   }
 });
 
+/**
+ * POST /api/admin/toggle-system-status
+ * Toggles maintenance break (freezes Ward Executive logins, allows only Super Admin).
+ */
+router.post("/toggle-system-status", verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { systemActive } = req.body;
+    const isActive = Boolean(systemActive);
+    await adminDb.collection("systemSettings").doc("maintenance").set(
+      {
+        systemActive: isActive,
+        maintenanceMode: !isActive,
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user?.email || req.user?.uid || "SUPER_ADMIN",
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      success: true,
+      systemActive: isActive,
+      maintenanceMode: !isActive,
+      message: isActive
+        ? "Municipal system is active. Ward Executive logins are enabled."
+        : "Maintenance break is active. Ward Executive logins are frozen.",
+    });
+  } catch (error) {
+    console.error("[AdminRoutes] Error toggling system status:", error);
+    return res.status(500).json({
+      error: "Failed to toggle system maintenance status.",
+      details: error.message,
+    });
+  }
+});
+
 module.exports = router;
