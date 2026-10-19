@@ -269,3 +269,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Nagarयोजना Backend API running on http://localhost:${PORT}`);
 });
+
+app.get("/", (req, res) => {
+  res.status(200).send("NagarYojana API is awake and running!");
+});

@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, setPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -16,5 +16,10 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Enforce browserSessionPersistence so auth credentials are not stored indefinitely in localStorage/IndexedDB
+setPersistence(auth, browserSessionPersistence).catch((err) => {
+  console.warn('Failed to set browserSessionPersistence on init:', err?.message);
+});
 
 export default app;

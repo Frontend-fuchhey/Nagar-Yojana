@@ -3,6 +3,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  setPersistence,
+  browserSessionPersistence,
 } from 'firebase/auth';
 import {
   collection,
@@ -54,6 +56,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [lockInfo, setLockInfo] = useState(null); // { email, until } when an email is locked
+  const [inactivityNotice, setInactivityNotice] = useState('');
+
+  // Security Policy: 15 minutes of user inactivity triggers auto-logout
+  const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+  const lastActiveTimeRef = useRef(Date.now());
 
   // Super Admin: Provisioning Form State
   const [formName, setFormName] = useState('');
@@ -87,11 +94,55 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const [updatingProjectId, setUpdatingProjectId] = useState(null);
   const [projectUpdateFeedback, setProjectUpdateFeedback] = useState({});
 
+  // Helper: auto-logout on session expiration / inactivity
+  const handleAutoLogout = async (reason = 'inactivity') => {
+    try {
+      sessionStorage.removeItem('staff_session_active');
+      localStorage.removeItem('staff_last_active');
+      await signOut(auth);
+    } catch (err) {
+      console.error('Auto logout error:', err);
+    } finally {
+      setCurrentUser(null);
+      setUserRole(null);
+      setUserProfile(null);
+      if (reason === 'inactivity') {
+        setInactivityNotice(
+          'For municipal security, your session ended due to 15 minutes of inactivity. Please sign in again.'
+        );
+      }
+    }
+  };
+
   // 1. Firebase Auth State Observer
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setAuthLoading(true);
       if (user) {
+        // Enforce session boundary (Option A) and inactivity check (Option C)
+        const isSessionActive = sessionStorage.getItem('staff_session_active');
+        const lastActiveStr = localStorage.getItem('staff_last_active');
+        const lastActive = lastActiveStr ? Number(lastActiveStr) : null;
+        const isIdleExpired = Boolean(lastActive && Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS);
+
+        if (!isSessionActive || isIdleExpired) {
+          try {
+            sessionStorage.removeItem('staff_session_active');
+            localStorage.removeItem('staff_last_active');
+            await signOut(auth);
+          } catch (e) {}
+          setCurrentUser(null);
+          setUserRole(null);
+          setUserProfile(null);
+          if (isIdleExpired) {
+            setInactivityNotice(
+              'For municipal security, your session ended due to 15 minutes of inactivity. Please sign in again.'
+            );
+          }
+          setAuthLoading(false);
+          return;
+        }
+
         setCurrentUser(user);
         try {
           // Check claims first
@@ -142,6 +193,74 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
     return () => unsubscribe();
   }, []);
+
+  // 1b. Inactivity / Idle Auto-Logout Tracker (Option C)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    // Reset last active timestamp for current user session
+    const initialTime = Date.now();
+    lastActiveTimeRef.current = initialTime;
+    try {
+      localStorage.setItem('staff_last_active', String(initialTime));
+    } catch (e) {}
+
+    // Throttle user activity tracking (at most once every 3 seconds)
+    const handleUserActivity = () => {
+      const now = Date.now();
+      if (now - lastActiveTimeRef.current >= 3000) {
+        lastActiveTimeRef.current = now;
+        try {
+          localStorage.setItem('staff_last_active', String(now));
+        } catch (e) {}
+      }
+    };
+
+    const checkInactivity = () => {
+      const now = Date.now();
+      let lastActive = lastActiveTimeRef.current;
+      try {
+        const stored = localStorage.getItem('staff_last_active');
+        if (stored) {
+          const parsed = Number(stored);
+          if (!isNaN(parsed) && parsed > 0) {
+            lastActive = parsed;
+          }
+        }
+      } catch (e) {}
+
+      if (now - lastActive >= INACTIVITY_TIMEOUT_MS) {
+        handleAutoLogout('inactivity');
+      }
+    };
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+    events.forEach((evt) => {
+      window.addEventListener(evt, handleUserActivity, { passive: true });
+    });
+
+    // Periodic check every 15 seconds
+    const intervalId = setInterval(checkInactivity, 15000);
+
+    // Immediate check on visibility/focus change (e.g. waking from sleep or tab refocus)
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkInactivity();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      events.forEach((evt) => {
+        window.removeEventListener(evt, handleUserActivity);
+      });
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [currentUser]);
 
   // 2. Super Admin: Load Executives Directory (Firestore Listener + REST Fallback)
   const fetchExecutivesViaRest = async () => {
@@ -393,6 +512,7 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   const handleSignIn = async (e) => {
     e.preventDefault();
     setLoginError('');
+    setInactivityNotice('');
     setLoginSubmitting(true);
     const email = loginEmail.trim();
     const emailKey = email.toLowerCase();
@@ -409,8 +529,13 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
         console.warn('Lockout status check unavailable:', statusErr.message);
       }
 
-      // 2. Attempt sign-in
+      // 2. Enforce session persistence (Option A) and attempt sign-in
+      await setPersistence(auth, browserSessionPersistence);
       const cred = await signInWithEmailAndPassword(auth, email, loginPassword);
+
+      // Mark session as actively authorized in this browser session
+      sessionStorage.setItem('staff_session_active', '1');
+      localStorage.setItem('staff_last_active', String(Date.now()));
 
       // 3. Success: reset the failure counter
       try {
@@ -456,10 +581,13 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
   // Handler: Sign Out
   const handleSignOut = async () => {
     try {
+      sessionStorage.removeItem('staff_session_active');
+      localStorage.removeItem('staff_last_active');
       await signOut(auth);
       setCurrentUser(null);
       setUserRole(null);
       setUserProfile(null);
+      setInactivityNotice('');
     } catch (err) {
       console.error('Sign Out Error:', err);
     }
@@ -718,6 +846,17 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
               </p>
             </div>
 
+            {/* Inactivity Notice Banner */}
+            {inactivityNotice && (
+              <div
+                role="status"
+                className="mb-5 p-3.5 bg-[#f0f9ff] border border-[#bae6fd] rounded-[11px] text-xs text-[#0369a1] flex items-start gap-2.5"
+              >
+                <Clock className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#0284c7]" />
+                <span className="leading-relaxed font-medium">{inactivityNotice}</span>
+              </div>
+            )}
+
             {/* Error Banner */}
             {loginError && (
               <div
@@ -840,6 +979,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
             {/* Right: User Information (Name only) & Exit Actions */}
             <div className="flex items-center gap-3">
+              <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200" title="Session active for this browser window. Auto-logout after 15 minutes of inactivity.">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Session Secured · 15m Idle</span>
+              </div>
+
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center text-xs font-semibold shadow-sm">
                   PK
@@ -1777,6 +1921,11 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200" title="Session active for this browser window. Auto-logout after 15 minutes of inactivity.">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Session Secured · 15m Idle</span>
+            </div>
+
             <button
               type="button"
               onClick={onReturnToPublic}
