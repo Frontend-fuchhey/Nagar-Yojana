@@ -979,11 +979,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
 
             {/* Right: User Information (Name only) & Exit Actions */}
             <div className="flex items-center gap-3">
-              <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200" title="Session active for this browser window. Auto-logout after 15 minutes of inactivity.">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Session Secured · 15m Idle</span>
-              </div>
-
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center text-xs font-semibold shadow-sm">
                   PK
@@ -1921,11 +1916,6 @@ export default function StaffPortal({ onReturnToPublic, language = 'en' }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200" title="Session active for this browser window. Auto-logout after 15 minutes of inactivity.">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Session Secured · 15m Idle</span>
-            </div>
-
             <button
               type="button"
               onClick={onReturnToPublic}
