@@ -241,4 +241,41 @@ const sendContractorCredentials = async ({ name, companyName, email, wardNumber,
     }
 };
 
-module.exports = { sendWardExecCredentials, sendContractorCredentials };
+
+/**
+ * Dispatches a password reset email to a user.
+ */
+const sendPasswordResetEmailService = async ({ email, name, resetLink }) => {
+    try {
+        const recipientName = name || 'User';
+        const { data, error } = await resend.emails.send({
+            from: 'Nagar Yojana <admin@shrawankarki.com.np>',
+            to: email,
+            subject: 'Password Reset Request - Nagarयोजना',
+            text: `Dear ${recipientName},\n\nA password reset was requested for your Nagarयोजना account.\n\nPlease reset your password using this link:\n${resetLink}\n\nIf you did not request this, you can safely ignore this email.`,
+            html: `
+                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
+                    <h2 style="color: #111827; margin-top: 0; font-size: 20px;">Nagarयोजना Password Reset</h2>
+                    <p style="color: #4b5563; font-size: 14px;">Dear <strong>${recipientName}</strong>,</p>
+                    <p style="color: #4b5563; font-size: 14px; line-height: 1.5;">A password reset request was initiated for your municipal account (<strong>${email}</strong>).</p>
+                    <div style="text-align: center; margin: 28px 0;">
+                        <a href="${resetLink}" style="display: inline-block; background-color: #0066cc; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 9999px; font-weight: 600; font-size: 14px;">Reset Password</a>
+                    </div>
+                    <p style="color: #6b7280; font-size: 12px; line-height: 1.5;">If the button above does not work, copy and paste this link into your browser:<br/><a href="${resetLink}" style="color: #0066cc; word-break: break-all;">${resetLink}</a></p>
+                    <p style="color: #9ca3af; font-size: 11px; margin-top: 24px; border-top: 1px solid #f3f4f6; padding-top: 12px;">If you did not request this password reset, please disregard this email.</p>
+                </div>
+            `
+        });
+
+        if (error) {
+            console.warn('Resend API Warning (Password Reset):', error);
+            return false;
+        }
+        return true;
+    } catch (err) {
+        console.warn('Could not dispatch password reset via Resend:', err.message);
+        return false;
+    }
+};
+
+module.exports = { sendWardExecCredentials, sendContractorCredentials, sendPasswordResetEmailService };

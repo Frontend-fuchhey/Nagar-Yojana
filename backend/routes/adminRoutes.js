@@ -2,7 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const { admin, adminAuth, adminDb } = require("../firebaseAdmin");
 const { verifyToken, requireSuperAdmin, requireWardExec } = require("../middleware/authMiddleware");
-const { sendWardExecCredentials } = require("../services/emailService");
+const { sendWardExecCredentials, sendPasswordResetEmailService } = require("../services/emailService");
 const { generateTemporaryPassword } = require("../utils/passwordHelper");
 
 const router = express.Router();
@@ -233,6 +233,146 @@ router.get("/next-id/:wardNumber", verifyToken, requireWardExec, async (req, res
     return res.status(500).json({
       error: "Failed to calculate next executive ID.",
       details: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/admin/users
+ * Super Admin only: lists all registered and logged-in municipal users with name, email, post/role, and auth metadata.
+ */
+router.get("/users", verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("users").get();
+
+    // Fetch auth users to get accurate metadata (creationTime, lastSignInTime)
+    let authUsersList = [];
+    try {
+      const listRes = await adminAuth.listUsers(1000);
+      authUsersList = listRes.users || [];
+    } catch (authErr) {
+      console.warn("[AdminRoutes] auth.listUsers warning:", authErr.message);
+    }
+
+    const mergedList = [];
+    const processedUids = new Set();
+
+    // 1. Process from Firestore collection
+    snapshot.forEach((doc) => {
+      const d = doc.data();
+      const authU = authUsersList.find(
+        (u) => u.uid === doc.id || (d.email && u.email && u.email.toLowerCase() === d.email.toLowerCase())
+      );
+      processedUids.add(doc.id);
+      if (authU) processedUids.add(authU.uid);
+
+      let post = "Municipal Staff";
+      if (d.role === "SUPER_ADMIN") {
+        post = "Super Administrator";
+      } else if (d.role === "WARD_EXEC") {
+        post = `Ward Executive (Ward ${d.wardNumber ? (d.wardNumber < 10 ? '0' + d.wardNumber : d.wardNumber) : 'N/A'})`;
+      } else if (d.role === "CONTRACTOR") {
+        post = `Civic Contractor (Ward ${d.wardNumber ? (d.wardNumber < 10 ? '0' + d.wardNumber : d.wardNumber) : 'N/A'})`;
+      }
+
+      mergedList.push({
+        uid: doc.id,
+        ...d,
+        email: d.email || authU?.email || "",
+        fullName: d.fullName || d.companyName || d.displayName || authU?.displayName || "System User",
+        role: d.role || authU?.customClaims?.role || "WARD_EXEC",
+        post,
+        creationTime: authU?.metadata?.creationTime || d.createdAt || null,
+        lastSignInTime: authU?.metadata?.lastSignInTime || d.lastLoginAt || null,
+        isActive: d.isActive !== false,
+      });
+    });
+
+    // 2. Add any Firebase Auth users that might not have a Firestore doc yet
+    authUsersList.forEach((authU) => {
+      if (!processedUids.has(authU.uid)) {
+        processedUids.add(authU.uid);
+        const role = authU.customClaims?.role || (authU.email?.includes("admin") ? "SUPER_ADMIN" : "USER");
+        let post = "Municipal Staff";
+        if (role === "SUPER_ADMIN") {
+          post = "Super Administrator";
+        } else if (role === "WARD_EXEC") {
+          post = `Ward Executive (Ward ${authU.customClaims?.wardNumber || 'N/A'})`;
+        } else if (role === "CONTRACTOR") {
+          post = "Civic Contractor";
+        }
+
+        mergedList.push({
+          uid: authU.uid,
+          email: authU.email || "",
+          fullName: authU.displayName || authU.email?.split("@")[0] || "Administrator",
+          role,
+          post,
+          wardNumber: authU.customClaims?.wardNumber || null,
+          creationTime: authU.metadata?.creationTime || null,
+          lastSignInTime: authU.metadata?.lastSignInTime || null,
+          isActive: true,
+        });
+      }
+    });
+
+    // Sort by role precedence (SUPER_ADMIN first, then WARD_EXEC, then CONTRACTOR), then by ward/name
+    const roleWeight = { SUPER_ADMIN: 1, WARD_EXEC: 2, CONTRACTOR: 3 };
+    mergedList.sort((a, b) => {
+      const weightA = roleWeight[a.role] || 99;
+      const weightB = roleWeight[b.role] || 99;
+      if (weightA !== weightB) return weightA - weightB;
+      const wardA = Number(a.wardNumber) || 0;
+      const wardB = Number(b.wardNumber) || 0;
+      if (wardA !== wardB) return wardA - wardB;
+      return String(a.fullName || "").localeCompare(String(b.fullName || ""));
+    });
+
+    return res.json({ users: mergedList });
+  } catch (error) {
+    console.error("[AdminRoutes] Error listing all users:", error);
+    return res.status(500).json({
+      error: "Failed to retrieve users list.",
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/admin/users/reset-password
+ * Super Admin only: Generates a password reset link and dispatches email to that user.
+ */
+router.post("/users/reset-password", verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ error: "A valid email is required." });
+    }
+
+    const resetLink = await adminAuth.generatePasswordResetLink(email);
+    let emailSent = false;
+    try {
+      emailSent = await sendPasswordResetEmailService({
+        email,
+        name: req.body.name || email.split("@")[0],
+        resetLink,
+      });
+    } catch (e) {
+      console.warn("[AdminRoutes] Email dispatch warning:", e.message);
+    }
+
+    return res.json({
+      success: true,
+      email,
+      emailSent,
+      resetLink,
+      message: `Password reset email dispatched to ${email}.`,
+    });
+  } catch (error) {
+    console.error("[AdminRoutes] Error resetting user password:", error);
+    return res.status(500).json({
+      error: "Failed to generate password reset for user.",
+      details: error.message,
     });
   }
 });

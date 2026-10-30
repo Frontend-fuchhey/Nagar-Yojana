@@ -5,6 +5,7 @@ import {
   onAuthStateChanged,
   setPersistence,
   browserSessionPersistence,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import {
   collection,
@@ -34,6 +35,8 @@ import {
   Calendar,
   User,
   Sliders,
+  UserCheck,
+  KeyRound,
   Check,
   Clock,
   Sparkles,
@@ -104,6 +107,9 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
   const [systemActive, setSystemActive] = useState(true);
   const [systemToggling, setSystemToggling] = useState(false);
   const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
+  const isSigningInRef = useRef(false);
+  const systemActiveRef = useRef(systemActive);
+  systemActiveRef.current = systemActive;
 
   // Security Policy: 15 minutes of user inactivity triggers auto-logout
   const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -128,7 +134,13 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
   const [execSearch, setExecSearch] = useState('');
   const [execWardFilter, setExecWardFilter] = useState('All');
   const [directoryLoading, setDirectoryLoading] = useState(false);
-  const [adminTaskTab, setAdminTaskTab] = useState('all'); // 'all' | 'executives' | 'lockouts'
+  const [adminTaskTab, setAdminTaskTab] = useState('all'); // 'all' | 'executives' | 'users' | 'lockouts'
+  const [systemUsers, setSystemUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
+  const [userRoleFilter, setUserRoleFilter] = useState('All');
+  const [resettingUserEmail, setResettingUserEmail] = useState(null);
+  const [userResetFeedback, setUserResetFeedback] = useState({}); // { [email]: { type, text } }
   const [showProvisionForm, setShowProvisionForm] = useState(true);
   const [revokingUid, setRevokingUid] = useState(null);
   const [resendingUid, setResendingUid] = useState(null);
@@ -164,6 +176,9 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
   // 1. Firebase Auth State Observer
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // Skip observer race when handleSignIn is actively completing sign-in
+      if (isSigningInRef.current) return;
+
       setAuthLoading(true);
       if (user) {
         // Enforce session boundary (Option A) and inactivity check (Option C)
@@ -190,11 +205,9 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
           return;
         }
 
-        setCurrentUser(user);
         try {
           // Check claims first
           const tokenResult = await user.getIdTokenResult(true);
-          const emailLower = (user.email || '').toLowerCase();
           let detectedRole = tokenResult.claims?.role;
           let profileData = {};
 
@@ -226,15 +239,6 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
 
           const resolvedRole = detectedRole || profileData.role || 'WARD_EXEC';
 
-          // Route Separation & Safe Redirection
-          if (resolvedRole === 'WARD_EXEC' && portalType !== 'executive') {
-            onPortalChange?.('executive');
-          } else if (resolvedRole === 'CONTRACTOR' && portalType !== 'contractor') {
-            onPortalChange?.('contractor');
-          } else if (resolvedRole === 'SUPER_ADMIN' && portalType !== 'staff') {
-            onPortalChange?.('staff');
-          }
-
           // If Municipal Maintenance Break is active, freeze login for all roles except SUPER_ADMIN
           if (resolvedRole !== 'SUPER_ADMIN') {
             let isMaintActive = false;
@@ -247,7 +251,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 }
               }
             } catch (mErr) {
-              if (!systemActive) isMaintActive = true;
+              if (!systemActiveRef.current) isMaintActive = true;
             }
 
             if (isMaintActive) {
@@ -263,6 +267,15 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               setAuthLoading(false);
               return;
             }
+          }
+
+          // Route Separation & Safe Redirection
+          if (resolvedRole === 'WARD_EXEC' && portalType !== 'executive') {
+            onPortalChange?.('executive');
+          } else if (resolvedRole === 'CONTRACTOR' && portalType !== 'contractor') {
+            onPortalChange?.('contractor');
+          } else if (resolvedRole === 'SUPER_ADMIN' && portalType !== 'staff') {
+            onPortalChange?.('staff');
           }
 
           setUserRole(resolvedRole);
@@ -284,9 +297,11 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             projectId: profileData.projectId || null,
             projectTitle: profileData.projectTitle || null,
           });
+          setCurrentUser(user);
         } catch (err) {
           console.error('Error resolving user role:', err);
           setUserRole('WARD_EXEC');
+          setCurrentUser(user);
         }
       } else {
         setCurrentUser(null);
@@ -297,7 +312,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
     });
 
     return () => unsubscribe();
-  }, [systemActive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Helper: Force immediate eviction of non-Super Admin users when maintenance is active
   const evictNonSuperAdmin = async (msg) => {
@@ -326,7 +342,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         if (stored !== null) {
           const isActive = stored === 'true';
           setSystemActive(isActive);
-          if (!isActive && currentUser && userRole !== 'SUPER_ADMIN') {
+          if (!isActive && currentUser && userRole && userRole !== 'SUPER_ADMIN') {
             evictNonSuperAdmin();
           }
         }
@@ -473,6 +489,93 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
     };
   }, [currentUser]);
 
+  // Super Admin: Send Password Reset Email to User
+  const handleResetPassword = async (userObj) => {
+    const targetEmail = userObj?.email;
+    if (!targetEmail) return;
+
+    setResettingUserEmail(targetEmail);
+    setUserResetFeedback((prev) => ({ ...prev, [targetEmail]: null }));
+
+    try {
+      const token = currentUser ? await currentUser.getIdToken() : null;
+      let sent = false;
+
+      // 1. Attempt backend reset-password endpoint with Resend and Admin SDK
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/users/reset-password`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ email: targetEmail, name: userObj.fullName }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sent = true;
+        }
+      } catch (apiErr) {
+        console.warn('Backend reset password error, falling back to Firebase Auth client:', apiErr);
+      }
+
+      // 2. Client-side Firebase Auth fallback
+      if (!sent) {
+        await sendPasswordResetEmail(auth, targetEmail);
+      }
+
+      setUserResetFeedback((prev) => ({
+        ...prev,
+        [targetEmail]: { type: 'success', text: `Password reset email sent to ${targetEmail}!` },
+      }));
+    } catch (err) {
+      console.error('Password reset error:', err);
+      try {
+        await sendPasswordResetEmail(auth, targetEmail);
+        setUserResetFeedback((prev) => ({
+          ...prev,
+          [targetEmail]: { type: 'success', text: `Password reset email sent to ${targetEmail}!` },
+        }));
+      } catch (clientErr) {
+        setUserResetFeedback((prev) => ({
+          ...prev,
+          [targetEmail]: { type: 'error', text: clientErr.message || 'Failed to send reset email.' },
+        }));
+      }
+    } finally {
+      setResettingUserEmail(null);
+      setTimeout(() => {
+        setUserResetFeedback((prev) => {
+          const next = { ...prev };
+          delete next[targetEmail];
+          return next;
+        });
+      }, 5000);
+    }
+  };
+
+  // Super Admin: Load All System Users Directory
+  const fetchSystemUsers = async () => {
+    try {
+      if (!currentUser) return;
+      setUsersLoading(true);
+      const token = await currentUser.getIdToken();
+      const res = await fetch(`${API_BASE}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.users) {
+          setSystemUsers(data.users);
+        }
+      }
+    } catch (err) {
+      console.warn('API users fetch fallback:', err.message);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
   // 2. Super Admin: Load Executives Directory (Firestore Listener + REST Fallback)
   const fetchExecutivesViaRest = async () => {
     try {
@@ -513,6 +616,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
 
     // Initial fetch via REST
     fetchExecutivesViaRest();
+    fetchSystemUsers();
 
     // Setup real-time listener on Firestore users collection
     let unsubSnapshot = null;
@@ -719,6 +823,30 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
     };
   }, [executives]);
 
+  // Filtered System Users for Users Tab
+  const filteredUsers = useMemo(() => {
+    return systemUsers.filter((u) => {
+      // Role / Post filter
+      if (userRoleFilter !== 'All') {
+        if (userRoleFilter === 'SUPER_ADMIN' && u.role !== 'SUPER_ADMIN') return false;
+        if (userRoleFilter === 'WARD_EXEC' && u.role !== 'WARD_EXEC') return false;
+        if (userRoleFilter === 'CONTRACTOR' && u.role !== 'CONTRACTOR') return false;
+      }
+      // Search by name, mail, post, ward
+      if (userSearch.trim()) {
+        const q = userSearch.toLowerCase();
+        const matchesName = u.fullName && u.fullName.toLowerCase().includes(q);
+        const matchesEmail = u.email && u.email.toLowerCase().includes(q);
+        const matchesPost = u.post && u.post.toLowerCase().includes(q);
+        const matchesWard = u.wardNumber && `ward ${u.wardNumber}`.toLowerCase().includes(q);
+        if (!matchesName && !matchesEmail && !matchesPost && !matchesWard) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [systemUsers, userRoleFilter, userSearch]);
+
   // Filtered Executives List for Directory Table
   const filteredExecutives = useMemo(() => {
     return executives.filter((exec) => {
@@ -778,6 +906,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
   // Handler: Sign In
   const handleSignIn = async (e) => {
     e.preventDefault();
+    if (loginSubmitting || isSigningInRef.current) return;
     setLoginError('');
     setInactivityNotice('');
     setLoginSubmitting(true);
@@ -796,7 +925,12 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         console.warn('Lockout status check unavailable:', statusErr.message);
       }
 
-      // 2. Enforce session persistence (Option A) and attempt sign-in with clean sanitized password
+      // 2. Mark session active BEFORE Firebase sign-in so onAuthStateChanged never signs out the fresh session
+      isSigningInRef.current = true;
+      sessionStorage.setItem('staff_session_active', '1');
+      localStorage.setItem('staff_last_active', String(Date.now()));
+
+      // Enforce session persistence (Option A) and attempt sign-in with clean sanitized password
       await setPersistence(auth, browserSessionPersistence);
       const cleanPassword = (loginPassword || '')
         .trim()
@@ -834,7 +968,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       const resolvedRole = detectedRole || profileData.role || 'WARD_EXEC';
 
       // 2b. Check if system maintenance break is active (freezes all except SUPER_ADMIN)
-      let isSystemPaused = !systemActive;
+      let isSystemPaused = !systemActiveRef.current;
       try {
         const maintSnap = await getDoc(doc(db, 'systemSettings', 'maintenance'));
         if (maintSnap.exists()) {
@@ -846,16 +980,43 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       if (isSystemPaused && resolvedRole !== 'SUPER_ADMIN') {
         sessionStorage.removeItem('staff_session_active');
         localStorage.removeItem('staff_last_active');
+        isSigningInRef.current = false;
         await signOut(auth);
+        setCurrentUser(null);
+        setUserRole(null);
+        setUserProfile(null);
         setLoginError(
           'Municipal System Maintenance: Staff, Ward Executive, and Contractor logins are temporarily frozen for maintenance. Only the Chief Municipal Administrator (Super Admin) can access the system at this time.'
         );
         return;
       }
 
-      // Mark session as actively authorized in this browser session
+      // Refresh session markers and commit authenticated user state immediately
       sessionStorage.setItem('staff_session_active', '1');
       localStorage.setItem('staff_last_active', String(Date.now()));
+      setLockInfo(null);
+
+      setUserRole(resolvedRole);
+      setUserProfile({
+        ...profileData,
+        email: cred.user.email,
+        displayName:
+          profileData.companyName ||
+          profileData.fullName ||
+          cred.user.displayName ||
+          (resolvedRole === 'SUPER_ADMIN'
+            ? 'Chief Municipal Admin'
+            : resolvedRole === 'CONTRACTOR'
+            ? 'Civic Contractor'
+            : 'Ward Executive'),
+        wardNumber: profileData.wardNumber || tokenResult.claims?.wardNumber || null,
+        executiveId: profileData.executiveId || null,
+        contractorId: profileData.contractorId || null,
+        projectId: profileData.projectId || null,
+        projectTitle: profileData.projectTitle || null,
+      });
+      setCurrentUser(cred.user);
+      setAuthLoading(false);
 
       // Automatically route to designated portal based on credentials
       if (resolvedRole === 'SUPER_ADMIN') {
@@ -866,15 +1027,16 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         onPortalChange?.('executive');
       }
 
-      // 3. Success: reset the failure counter
-      try {
-        const token = await cred.user.getIdToken();
-        await callAuthApi('clear-failures', {}, token);
-      } catch (clearErr) {
-        console.warn('Could not clear failed attempts:', clearErr.message);
-      }
-      setLockInfo(null);
+      // 3. Success: reset the failure counter in background without delaying portal load
+      cred.user
+        .getIdToken()
+        .then((token) => callAuthApi('clear-failures', {}, token))
+        .catch((clearErr) => {
+          console.warn('Could not clear failed attempts:', clearErr.message);
+        });
     } catch (err) {
+      sessionStorage.removeItem('staff_session_active');
+      localStorage.removeItem('staff_last_active');
       console.error('Sign In Error:', err);
       let msg = 'Failed to sign in. Please verify your municipal credentials.';
       const wrongCredentials =
@@ -883,7 +1045,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
         err.code === 'auth/user-not-found';
 
       if (err.code === 'auth/operation-not-allowed') {
-        msg = 'Email/Password sign-in is disabled in Firebase Console. Please enable Email/Password under Authentication â†’ Sign-in method in the Firebase Console.';
+        msg = 'Email/Password sign-in is disabled in Firebase Console. Please enable Email/Password under Authentication → Sign-in method in the Firebase Console.';
       } else if (wrongCredentials) {
         msg = 'Incorrect email or password.';
         try {
@@ -903,6 +1065,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       }
       setLoginError(msg);
     } finally {
+      isSigningInRef.current = false;
       setLoginSubmitting(false);
     }
   };
@@ -1443,7 +1606,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               />
               <div className="flex justify-center mb-2">
                 <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
-                  Official Municipal Gateway · विराटनगर महानगरपालिका
+                  Municipal Gateway · विराटनगर महानगरपालिका
                 </span>
               </div>
               <h1 className="text-[26px] font-semibold tracking-tight flex items-center justify-center gap-1.5">
@@ -1502,7 +1665,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             <form onSubmit={handleSignIn} className="space-y-4">
               <div>
                 <label htmlFor="staff-email" className="block text-xs font-semibold text-[#333333] mb-1.5">
-                  Official Email Address
+                  Email Address
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1515,7 +1678,6 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                     onChange={(e) => setLoginEmail(e.target.value)}
                     onBlur={handleEmailBlur}
                     disabled={loginSubmitting || isLoginLocked}
-                    placeholder="name@biratnagar.gov.np or registered email"
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-3.5 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
@@ -1535,7 +1697,6 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     disabled={loginSubmitting || isLoginLocked}
-                    placeholder="••••••••••••"
                     className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-10 pr-10 py-3 text-sm text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed font-sans"
                   />
                   <button
@@ -1636,10 +1797,11 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               <button
                 type="button"
                 onClick={handleSignOut}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-[#c4232d] bg-[#fff5f5] hover:bg-[#ffe9e9] border border-[#ffd6d6] transition-colors cursor-pointer"
+                aria-label="Sign Out"
+                title="Sign Out"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[#c4232d] bg-[#fff5f5] hover:bg-[#ffe9e9] border border-[#ffd6d6] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c4232d]"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
+                <LogOut className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -1687,6 +1849,26 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               <button
                 type="button"
                 role="tab"
+                aria-selected={adminTaskTab === 'users'}
+                onClick={() => setAdminTaskTab('users')}
+                className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
+                  adminTaskTab === 'users'
+                    ? 'bg-[#1d1d1f] text-white shadow-sm'
+                    : 'text-[#7a7a7a] hover:text-[#1d1d1f]'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Users</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none ${
+                  adminTaskTab === 'users' ? 'bg-white/20 text-white' : 'bg-white text-[#7a7a7a] border border-[#e0e0e0]'
+                }`}>
+                  {systemUsers.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
                 aria-selected={adminTaskTab === 'lockouts'}
                 onClick={() => setAdminTaskTab('lockouts')}
                 className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
@@ -1711,35 +1893,35 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 onClick={() => setMaintenanceModalOpen(true)}
                 disabled={systemToggling}
                 title={
-                  systemActive
-                    ? 'System Active. Click to open Maintenance Break options.'
-                    : 'Maintenance Break Active (Logins Frozen). Click to resume normal system operations.'
+                  !systemActive
+                    ? 'Maintenance Break is ACTIVE (Ward logins frozen). Click to resume normal system operations.'
+                    : 'Maintenance Break is OFF (Normal operations). Click to activate maintenance break.'
                 }
                 className={`inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
-                  systemActive
-                    ? 'bg-white hover:bg-[#f5f5f7] border-[#e0e0e0] shadow-xs'
-                    : 'bg-[#fff5f5] hover:bg-[#ffe9e9] border-[#ffd6d6] shadow-xs'
+                  !systemActive
+                    ? 'bg-[#eefaf3] hover:bg-[#e4f6ec] border-[#bbf7d0] shadow-xs'
+                    : 'bg-white hover:bg-[#f5f5f7] border-[#e0e0e0] shadow-xs'
                 } ${systemToggling ? 'opacity-60 cursor-wait' : ''}`}
                 aria-pressed={!systemActive}
               >
                 <span
                   className={`select-none font-semibold transition-colors duration-200 ${
-                    systemActive ? 'text-[#156947]' : 'text-[#c4232d]'
+                    !systemActive ? 'text-[#156947]' : 'text-[#666666]'
                   }`}
                 >
                   Maintenance Break
                 </span>
 
-                {/* Sliding toggle switch */}
+                {/* Sliding toggle switch: Grey when Maintenance Break is OFF, Green when Maintenance Break is ON */}
                 <span
                   className={`relative inline-flex h-4 w-7 flex-shrink-0 rounded-full border border-transparent transition-colors duration-200 ease-in-out ${
-                    systemActive ? 'bg-[#156947]' : 'bg-[#c4232d]'
+                    !systemActive ? 'bg-[#156947]' : 'bg-[#d1d5db]'
                   }`}
                   aria-hidden="true"
                 >
                   <span
                     className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
-                      systemActive ? 'translate-x-3' : 'translate-x-0'
+                      !systemActive ? 'translate-x-3' : 'translate-x-0'
                     }`}
                   />
                 </span>
@@ -2118,7 +2300,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 {/* Email Address */}
                 <div>
                   <label className="block text-xs font-semibold text-[#333333] mb-1.5">
-                    Official Executive Gmail *
+                    Executive Gmail *
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -2561,6 +2743,231 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             </section>
             </div>
           )}
+
+          {/* USERS VIEW: Registered & Logged-in System Users */}
+          {adminTaskTab === 'users' && (
+            <section className="bg-white border border-[#e0e0e0] rounded-[18px] p-6 sm:p-7 space-y-5">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
+                    <span>System Users & Authorities</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-[#f5f5f7] text-[#1d1d1f] border border-[#e0e0e0]">
+                      {filteredUsers.length} {filteredUsers.length === 1 ? 'User' : 'Users'}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#7a7a7a]">
+                    List of all registered and logged-in system users with verified name, email address, and assigned post.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={fetchSystemUsers}
+                    disabled={usersLoading}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1d1d1f] bg-white hover:bg-[#f5f5f7] border border-[#e0e0e0] transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${usersLoading ? 'animate-spin text-[#0066cc]' : ''}`} />
+                    <span>Sync Users</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary Metrics Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                <div className="p-3.5 bg-[#fafafc] border border-[#e0e0e0] rounded-[14px]">
+                  <p className="text-[11px] font-medium text-[#7a7a7a] uppercase tracking-wider">Total Registered</p>
+                  <p className="text-2xl font-semibold text-[#1d1d1f] mt-1">{systemUsers.length}</p>
+                </div>
+                <div className="p-3.5 bg-[#fafafc] border border-[#e0e0e0] rounded-[14px]">
+                  <p className="text-[11px] font-medium text-[#7a7a7a] uppercase tracking-wider">Super Admins</p>
+                  <p className="text-2xl font-semibold text-[#6d28d9] mt-1">
+                    {systemUsers.filter((u) => u.role === 'SUPER_ADMIN').length}
+                  </p>
+                </div>
+                <div className="p-3.5 bg-[#fafafc] border border-[#e0e0e0] rounded-[14px]">
+                  <p className="text-[11px] font-medium text-[#7a7a7a] uppercase tracking-wider">Ward Executives</p>
+                  <p className="text-2xl font-semibold text-[#0066cc] mt-1">
+                    {systemUsers.filter((u) => u.role === 'WARD_EXEC').length}
+                  </p>
+                </div>
+                <div className="p-3.5 bg-[#fafafc] border border-[#e0e0e0] rounded-[14px]">
+                  <p className="text-[11px] font-medium text-[#7a7a7a] uppercase tracking-wider">Civic Contractors</p>
+                  <p className="text-2xl font-semibold text-[#156947] mt-1">
+                    {systemUsers.filter((u) => u.role === 'CONTRACTOR').length}
+                  </p>
+                </div>
+              </div>
+
+              {/* Search & Post Filter Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-1">
+                <div className="sm:col-span-8 relative">
+                  <Search className="w-4 h-4 text-[#7a7a7a] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search user by name, email, post, or ward..."
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-9 pr-3 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
+                  />
+                </div>
+
+                <div className="sm:col-span-4 relative">
+                  <Filter className="w-3.5 h-3.5 text-[#7a7a7a] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <select
+                    value={userRoleFilter}
+                    onChange={(e) => setUserRoleFilter(e.target.value)}
+                    className="w-full bg-[#fafafc] border border-[#e0e0e0] rounded-[11px] pl-8 pr-3 py-2.5 text-xs text-[#1d1d1f] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#0071e3] focus:border-transparent transition-all"
+                  >
+                    <option value="All">All Posts / Designations</option>
+                    <option value="SUPER_ADMIN">Super Administrator</option>
+                    <option value="WARD_EXEC">Ward Executive</option>
+                    <option value="CONTRACTOR">Civic Contractor</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Users Directory Table */}
+              <div className="pt-2">
+                {usersLoading && systemUsers.length === 0 ? (
+                  <div className="py-14 flex flex-col items-center justify-center text-[#7a7a7a] gap-2">
+                    <RefreshCw className="w-6 h-6 animate-spin text-[#0066cc]" />
+                    <span className="text-xs">Loading registered users directory...</span>
+                  </div>
+                ) : filteredUsers.length === 0 ? (
+                  <div className="py-12 px-4 text-center rounded-[14px] bg-[#fafafc] border border-dashed border-[#e0e0e0]">
+                    <Users className="w-8 h-8 text-[#7a7a7a] mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-[#1d1d1f]">No Users Match Criteria</p>
+                    <p className="text-xs text-[#7a7a7a] mt-1 max-w-sm mx-auto">
+                      {userSearch || userRoleFilter !== 'All'
+                        ? 'No users match your search query or post filter. Try clearing the filters.'
+                        : 'No registered users found in the municipal database.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-[14px] border border-[#e0e0e0] shadow-xs">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-[#f5f5f7] border-b border-[#e0e0e0] text-[#7a7a7a] font-semibold uppercase tracking-wider text-[11px]">
+                          <th className="py-3 px-4">Name</th>
+                          <th className="py-3 px-4">Mail</th>
+                          <th className="py-3 px-4">Post</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#f0f0f2] bg-white">
+                        {filteredUsers.map((u) => {
+                          const initials = (u.fullName || u.companyName || u.email || 'U')
+                            .split(' ')
+                            .map((p) => p[0])
+                            .join('')
+                            .toUpperCase()
+                            .slice(0, 2);
+
+                          const postName =
+                            u.post ||
+                            (u.role === 'SUPER_ADMIN'
+                              ? 'Super Administrator'
+                              : u.role === 'WARD_EXEC'
+                              ? `Ward Executive (Ward ${u.wardNumber || ''})`
+                              : 'Civic Contractor');
+
+                          return (
+                            <tr key={u.uid || u.email} className="hover:bg-[#fafafc] transition-colors">
+                              {/* 1. NAME (No session pill) */}
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-full bg-[#1d1d1f] text-white flex items-center justify-center font-semibold text-xs flex-shrink-0 shadow-xs">
+                                    {initials}
+                                  </div>
+                                  <div className="space-y-0.5">
+                                    <span className="font-semibold text-[#1d1d1f] text-sm block">
+                                      {u.fullName || u.companyName || 'Registered User'}
+                                    </span>
+                                    {u.phone && (
+                                      <div className="flex items-center gap-1 text-[11px] text-[#7a7a7a]">
+                                        <Phone className="w-3 h-3 text-[#999999]" />
+                                        <span>{u.phone}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. MAIL */}
+                              <td className="py-3.5 px-4 font-mono text-xs">
+                                <a
+                                  href={`mailto:${u.email}`}
+                                  className="inline-flex items-center gap-1.5 text-[#0066cc] hover:underline"
+                                  title={`Open email client for ${u.email}`}
+                                >
+                                  <Mail className="w-3.5 h-3.5 text-[#7a7a7a] flex-shrink-0" />
+                                  <span>{u.email}</span>
+                                </a>
+                              </td>
+
+                              {/* 3. POST (Plain words, no pill) */}
+                              <td className="py-3.5 px-4 text-xs font-medium text-[#1d1d1f]">
+                                {postName}
+                              </td>
+
+                              {/* 4. ACTIONS (Reset Password & Email Buttons) */}
+                              <td className="py-3.5 px-4 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {/* Reset Password Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetPassword(u)}
+                                    disabled={resettingUserEmail === u.email}
+                                    title={`Send password reset email to ${u.email}`}
+                                    aria-label={`Send password reset email to ${u.email}`}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-[#b45309] bg-[#fffbeb] hover:bg-[#fef3c7] border border-[#fde68a] transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                                  >
+                                    {resettingUserEmail === u.email ? (
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <KeyRound className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>
+                                      {resettingUserEmail === u.email ? 'Sending...' : 'Reset Password'}
+                                    </span>
+                                  </button>
+
+                                  {/* Email Button */}
+                                  <a
+                                    href={`mailto:${u.email}`}
+                                    title={`Open email client for ${u.fullName || u.email}`}
+                                    aria-label={`Send email to ${u.fullName || u.email}`}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-[#0066cc] bg-[#eef5ff] hover:bg-[#d6e6fb] border border-[#d6e6fb] transition-colors cursor-pointer shadow-2xs"
+                                  >
+                                    <Mail className="w-3.5 h-3.5" />
+                                    <span>Email</span>
+                                  </a>
+                                </div>
+
+                                {userResetFeedback[u.email] && (
+                                  <div
+                                    className={`text-[11px] font-medium mt-1.5 ${
+                                      userResetFeedback[u.email].type === 'success'
+                                        ? 'text-[#156947]'
+                                        : 'text-[#c4232d]'
+                                    }`}
+                                  >
+                                    {userResetFeedback[u.email].text}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
         </main>
 
         {/* Interactive In-System Maintenance Confirmation Modal */}
@@ -2788,7 +3195,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 {userProfile?.companyName || userProfile?.displayName || 'Civic Infrastructure Contractor'}
               </h1>
               <p className="text-sm text-[#7a7a7a]">
-                Official Login: <strong className="text-[#1d1d1f]">{currentUser.email}</strong> · Biratnagar Metropolitan City Appointed Vendor
+                Logged In: <strong className="text-[#1d1d1f]">{currentUser.email}</strong> · Biratnagar Metropolitan City Appointed Vendor
               </p>
             </div>
 
@@ -2807,7 +3214,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                 Assigned Civic Projects ({contractorProjects.length})
               </h2>
               <p className="text-xs text-[#7a7a7a]">
-                Projects officially assigned to your company by the Ward Executive.
+                Projects assigned to your company by the Ward Executive.
               </p>
             </div>
 
@@ -3083,7 +3490,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               Ward {userProfile?.wardNumber || '04'} Executive Workspace
             </h1>
             <p className="text-sm text-[#7a7a7a]">
-              Executive: <strong className="text-[#1d1d1f]">{userProfile?.displayName || userProfile?.fullName || 'Ward Executive'}</strong> · Official Contact: {currentUser.email}
+              Executive: <strong className="text-[#1d1d1f]">{userProfile?.displayName || userProfile?.fullName || 'Ward Executive'}</strong> · Contact: {currentUser.email}
             </p>
           </div>
 
@@ -3457,7 +3864,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#eefaf3] text-[#156947] border border-[#cfeedd]">
-                  Official Assignment
+                  Contractor Assignment
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#f5f5f7] text-[#333333] border border-[#e0e0e0]">
                   Preview ID: {dynamicContractorPreviewId}
@@ -3570,7 +3977,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
               </div>
 
               <div className="p-3 bg-[#fffbeb] border border-[#fde68a] rounded-[11px] text-xs text-[#92400e] leading-relaxed">
-                <strong>Dynamic Email Dispatch:</strong> Upon appointment, an official credential email will be dispatched to the contractor with sender strictly set to <em>"Nagar Yojana"</em> and subject <em>"Ward {userProfile?.wardNumber || '04'} | {'{Project Title}'} - Contractor Assignment"</em>.
+                <strong>Dynamic Email Dispatch:</strong> Upon appointment, a credential email will be dispatched to the contractor with sender strictly set to <em>"Nagar Yojana"</em> and subject <em>"Ward {userProfile?.wardNumber || '04'} | {'{Project Title}'} - Contractor Assignment"</em>.
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#f0f0f2]">

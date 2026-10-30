@@ -72,7 +72,7 @@ export default function StaffLoginModal({ isOpen, onClose }) {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className={LABEL_CLS}>
-              Official Email
+              Email Address
             </label>
             <input
               type="email"
