@@ -20,4 +20,5 @@ dist/
 frontend/dist/
 build/
 docs/
+*.docx
 DESIGN.md
