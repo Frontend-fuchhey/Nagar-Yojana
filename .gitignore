@@ -19,4 +19,5 @@ Thumbs.db
 dist/
 frontend/dist/
 build/
+docs/
 DESIGN.md
