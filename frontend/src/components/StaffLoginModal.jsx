@@ -10,6 +10,13 @@ export default function StaffLoginModal({ isOpen, onClose }) {
   const [password, setPassword] = useState('');
   const [notice, setNotice] = useState('');
 
+  // Reset password on modal close
+  useEffect(() => {
+    if (!isOpen) {
+      setPassword('');
+    }
+  }, [isOpen]);
+
   // Handle Escape key
   useEffect(() => {
     if (!isOpen) return;
@@ -69,7 +76,7 @@ export default function StaffLoginModal({ isOpen, onClose }) {
           </div>
         ) : null}
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
           <div>
             <label className={LABEL_CLS}>
               Email Address
@@ -90,6 +97,7 @@ export default function StaffLoginModal({ isOpen, onClose }) {
             <input
               type="password"
               required
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className={FIELD_CLS}

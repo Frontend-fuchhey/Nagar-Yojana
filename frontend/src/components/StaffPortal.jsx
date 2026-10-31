@@ -165,6 +165,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       setCurrentUser(null);
       setUserRole(null);
       setUserProfile(null);
+      setLoginPassword('');
+      setShowPassword(false);
       if (reason === 'inactivity') {
         setInactivityNotice(
           'For municipal security, your session ended due to 15 minutes of inactivity. Please sign in again.'
@@ -172,6 +174,14 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       }
     }
   };
+
+  // Security Policy: Whenever user enters or leaves a session, immediately clear password state from memory
+  useEffect(() => {
+    if (currentUser) {
+      setLoginPassword('');
+      setShowPassword(false);
+    }
+  }, [currentUser]);
 
   // 1. Firebase Auth State Observer
   useEffect(() => {
@@ -196,6 +206,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
           setCurrentUser(null);
           setUserRole(null);
           setUserProfile(null);
+          setLoginPassword('');
+          setShowPassword(false);
           if (isIdleExpired) {
             setInactivityNotice(
               'For municipal security, your session ended due to 15 minutes of inactivity. Please sign in again.'
@@ -327,6 +339,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       setCurrentUser(null);
       setUserRole(null);
       setUserProfile(null);
+      setLoginPassword('');
+      setShowPassword(false);
       setLoginError(
         msg ||
         'Municipal System Maintenance: Your session was closed because the system is currently in a maintenance break. Ward Executive logins are frozen.'
@@ -995,6 +1009,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       sessionStorage.setItem('staff_session_active', '1');
       localStorage.setItem('staff_last_active', String(Date.now()));
       setLockInfo(null);
+      setLoginPassword('');
+      setShowPassword(false);
 
       setUserRole(resolvedRole);
       setUserProfile({
@@ -1079,6 +1095,8 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
       setCurrentUser(null);
       setUserRole(null);
       setUserProfile(null);
+      setLoginPassword('');
+      setShowPassword(false);
       setInactivityNotice('');
     } catch (err) {
       console.error('Sign Out Error:', err);
@@ -1662,7 +1680,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
             )}
 
             {/* Login Form */}
-            <form onSubmit={handleSignIn} className="space-y-4">
+            <form onSubmit={handleSignIn} className="space-y-4" autoComplete="off">
               <div>
                 <label htmlFor="staff-email" className="block text-xs font-semibold text-[#333333] mb-1.5">
                   Email Address
@@ -1693,7 +1711,7 @@ export default function StaffPortal({ portalType = 'staff', onPortalChange, onRe
                     id="staff-password"
                     type={showPassword ? 'text' : 'password'}
                     required
-                    autoComplete="current-password"
+                    autoComplete="new-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     disabled={loginSubmitting || isLoginLocked}
